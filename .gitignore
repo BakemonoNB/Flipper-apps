@@ -1,0 +1,14 @@
+# ufbt
+dist/
+.ufbt/
+build/
+.vscode/
+compile_commands.json
+
+# Python
+.venv/
+__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db
