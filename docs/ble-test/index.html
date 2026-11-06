@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test BLE Flipper</title>
+<style>
+  :root { color-scheme: light dark; --ok: #2a9d4a; --err: #d33; --bg: #fff; --fg: #111; --muted: rgba(127,127,127,.14); }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #eee; } }
+  body { font: 16px/1.45 -apple-system, system-ui, sans-serif; margin: 0 auto; padding: 16px; max-width: 640px; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 22px; margin: 4px 0 8px; }
+  p { margin: 0 0 12px; }
+  button { font: inherit; padding: 12px 16px; margin: 4px 0; width: 100%; border-radius: 10px; border: 1px solid #888; background: var(--muted); color: inherit; }
+  button:disabled { opacity: .4; }
+  #log { white-space: pre-wrap; word-break: break-all; font: 13px/1.4 ui-monospace, Menlo, monospace; background: var(--muted); padding: 12px; border-radius: 10px; margin-top: 12px; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+</style>
+</head>
+<body>
+<h1>Test BLE Flipper</h1>
+<p>À ouvrir dans <b>Bluefy</b>. Avant : forcer la fermeture de l'app Flipper officielle (une seule connexion à la fois) et activer le Bluetooth du Flipper.</p>
+<button id="connect">1. Connecter</button>
+<button id="connectAll">1b. Connecter (voir tous les appareils)</button>
+<button id="ping" disabled>2. Ping RPC</button>
+<button id="disconnect" disabled>Déconnecter</button>
+<button id="copy">Copier le journal</button>
+<div id="log"></div>
+<script>
+'use strict';
+// Service série BLE du Flipper (transporte le RPC protobuf).
+const SERIAL_SVC = '8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000';
+const RX_CHAR = '19ed82ae-ed21-4c9d-4145-228e62fe0000';   // téléphone -> Flipper (write)
+const TX_CHAR = '19ed82ae-ed21-4c9d-4145-228e61fe0000';   // Flipper -> téléphone (indicate)
+const FLOW_CHAR = '19ed82ae-ed21-4c9d-4145-228e63fe0000'; // place libre dans le tampon du Flipper (uint32 BE)
+
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+function log(msg, cls) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  line.scrollIntoView({ block: 'end' });
+}
+const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join(' ');
+
+// --- Protobuf minimal (messages délimités par un varint de longueur) ---
+function varint(n) {
+  const out = [];
+  while (n > 0x7f) { out.push((n & 0x7f) | 0x80); n = Math.floor(n / 128); }
+  out.push(n);
+  return out;
+}
+function readVarint(b, p) { // -> [valeur, position après] ou null si incomplet
+  let v = 0, s = 0;
+  while (p < b.length) {
+    const x = b[p++];
+    v += (x & 0x7f) * 2 ** s;
+    if (!(x & 0x80)) return [v, p];
+    s += 7;
+    if (s > 49) throw new Error('varint invalide');
+  }
+  return null;
+}
+function concat(...parts) {
+  const len = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+function decodeFields(b) {
+  const out = [];
+  let p = 0;
+  while (p < b.length) {
+    const t = readVarint(b, p);
+    if (!t) throw new Error('message tronqué');
+    p = t[1];
+    const field = Math.floor(t[0] / 8), wt = t[0] & 7;
+    if (wt === 0) {
+      const v = readVarint(b, p);
+      if (!v) throw new Error('message tronqué');
+      out.push({ field, wt, value: v[0] }); p = v[1];
+    } else if (wt === 2) {
+      const l = readVarint(b, p);
+      if (!l || l[1] + l[0] > b.length) throw new Error('message tronqué');
+      p = l[1];
+      out.push({ field, wt, bytes: b.slice(p, p + l[0]) }); p += l[0];
+    } else if (wt === 1 || wt === 5) {
+      const n = wt === 1 ? 8 : 4;
+      if (p + n > b.length) throw new Error('message tronqué');
+      out.push({ field, wt, bytes: b.slice(p, p + n) }); p += n;
+    } else {
+      throw new Error('wire type non géré : ' + wt);
+    }
+  }
+  return out;
+}
+// PB.Main : command_id=1, command_status=2, has_next=3, system_ping_request=5, system_ping_response=6
+// PB_System.PingRequest / PingResponse : data=1 (bytes)
+function encodePing(id, data) {
+  const req = concat([0x0a], varint(data.length), data);
+  const main = concat([0x08], varint(id), [0x2a], varint(req.length), req);
+  return concat(varint(main.length), main);
+}
+
+// --- BLE ---
+let device = null, rxChar = null, txChar = null;
+let rxBuf = new Uint8Array(0), pending = null, nextId = 1;
+
+function setConnected(on) {
+  $('ping').disabled = !on;
+  $('disconnect').disabled = !on;
+  $('connect').disabled = on;
+  $('connectAll').disabled = on;
+}
+
+function onData(ev) {
+  const v = ev.target.value;
+  const chunk = new Uint8Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength));
+  log('← ' + hex(chunk));
+  rxBuf = concat(rxBuf, chunk);
+  try {
+    for (;;) {
+      const lv = readVarint(rxBuf, 0);
+      if (!lv || rxBuf.length < lv[1] + lv[0]) break;
+      const msg = rxBuf.slice(lv[1], lv[1] + lv[0]);
+      rxBuf = rxBuf.slice(lv[1] + lv[0]);
+      handleMessage(msg);
+    }
+  } catch (e) {
+    log('Décodage impossible : ' + e.message, 'err');
+    rxBuf = new Uint8Array(0);
+  }
+}
+
+function handleMessage(msg) {
+  const f = decodeFields(msg);
+  const get = (n) => f.find((x) => x.field === n);
+  const id = get(1) ? get(1).value : 0;
+  const status = get(2) ? get(2).value : 0;
+  log('Message RPC : command_id=' + id + ' status=' + status + ' champs=' + f.map((x) => x.field).join(','));
+  if (!pending || id !== pending.id) return;
+  const pong = get(6);
+  if (pong && pong.wt === 2) {
+    const d = decodeFields(pong.bytes).find((x) => x.field === 1);
+    const data = d ? d.bytes : new Uint8Array(0);
+    const ms = (performance.now() - pending.t).toFixed(0);
+    if (hex(data) === hex(pending.data)) log('PING OK : le Flipper a renvoyé ' + hex(data) + ' en ' + ms + ' ms', 'ok');
+    else log('Réponse au ping, mais données différentes : ' + hex(data), 'err');
+  } else {
+    log('Réponse sans ping_response (status ' + status + ')', 'err');
+  }
+  pending = null;
+}
+
+async function connect(all) {
+  if (!navigator.bluetooth) { log('Pas de Web Bluetooth ici. Ouvre la page dans Bluefy.', 'err'); return; }
+  try {
+    const optionalServices = [SERIAL_SVC, 'battery_service'];
+    device = await navigator.bluetooth.requestDevice(
+      all ? { acceptAllDevices: true, optionalServices }
+          : { filters: [{ namePrefix: 'Flipper' }], optionalServices });
+    log('Appareil choisi : ' + (device.name || '(sans nom)'));
+    device.addEventListener('gattserverdisconnected', () => { log('Déconnecté.', 'err'); setConnected(false); });
+    const server = await device.gatt.connect();
+    log('Connexion GATT OK.', 'ok');
+
+    try {
+      const bat = await (await server.getPrimaryService('battery_service')).getCharacteristic('battery_level');
+      log('Batterie : ' + (await bat.readValue()).getUint8(0) + ' %', 'ok');
+    } catch (e) { log('Batterie non lue : ' + e.message); }
+
+    const svc = await server.getPrimaryService(SERIAL_SVC);
+    log('Service série trouvé.', 'ok');
+    const chars = await svc.getCharacteristics();
+    rxChar = txChar = null;
+    let flowChar = null;
+    for (const c of chars) {
+      const p = c.properties;
+      log('  ' + c.uuid + ' [' + ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter((k) => p[k]).join(', ') + ']');
+      if (c.uuid === RX_CHAR) rxChar = c;
+      if (c.uuid === TX_CHAR) txChar = c;
+      if (c.uuid === FLOW_CHAR) flowChar = c;
+    }
+    // Repli si les UUID connus ne sont pas là : choix par propriétés.
+    if (!rxChar) rxChar = chars.find((c) => (c.properties.write || c.properties.writeWithoutResponse) && !c.properties.notify && !c.properties.indicate) || null;
+    if (!txChar) txChar = chars.find((c) => c.properties.indicate) || null;
+    if (!rxChar || !txChar) { log('Caractéristiques RX/TX introuvables.', 'err'); return; }
+    log('Écriture sur ' + rxChar.uuid + ', réception sur ' + txChar.uuid);
+
+    txChar.addEventListener('characteristicvaluechanged', onData);
+    await txChar.startNotifications(); // peut déclencher l'appairage : saisir le code affiché sur le Flipper
+    log('Réception active.', 'ok');
+
+    if (flowChar) {
+      try { log('Tampon libre côté Flipper : ' + (await flowChar.readValue()).getUint32(0, false) + ' octets'); }
+      catch (e) { log('Tampon non lu : ' + e.message); }
+    }
+    setConnected(true);
+    log('Prêt. Appuie sur « Ping RPC ».', 'ok');
+  } catch (e) {
+    log('Échec : ' + e.name + ' : ' + e.message, 'err');
+  }
+}
+
+async function ping() {
+  if (!rxChar) return;
+  const data = crypto.getRandomValues(new Uint8Array(4));
+  const id = nextId++;
+  const frame = encodePing(id, data);
+  pending = { id, data, t: performance.now() };
+  log('→ ' + hex(frame));
+  try {
+    if (rxChar.writeValueWithResponse) await rxChar.writeValueWithResponse(frame);
+    else await rxChar.writeValue(frame);
+  } catch (e) {
+    log('Écriture refusée : ' + e.name + ' : ' + e.message, 'err');
+    pending = null;
+    return;
+  }
+  setTimeout(() => {
+    if (pending && pending.id === id) { log('Pas de réponse au ping après 3 s.', 'err'); pending = null; }
+  }, 3000);
+}
+
+$('connect').onclick = () => connect(false);
+$('connectAll').onclick = () => connect(true);
+$('ping').onclick = ping;
+$('disconnect').onclick = () => { if (device && device.gatt.connected) device.gatt.disconnect(); };
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText(logEl.innerText); log('Journal copié.', 'ok'); }
+  catch (e) { log('Copie impossible : ' + e.message, 'err'); }
+};
+
+log('Navigateur : ' + navigator.userAgent);
+log('Contexte sécurisé (HTTPS) : ' + (window.isSecureContext ? 'oui' : 'NON'), window.isSecureContext ? 'ok' : 'err');
+log(navigator.bluetooth ? 'Web Bluetooth disponible.' : 'Web Bluetooth absent : ouvre la page dans Bluefy.', navigator.bluetooth ? 'ok' : 'err');
+
+window.__test = { encodePing, decodeFields, readVarint, varint }; // pour les tests hors navigateur
+</script>
+</body>
+</html>
