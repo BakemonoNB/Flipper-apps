@@ -184,6 +184,7 @@ export class Flipper extends EventTarget {
     this.device = null;
     this.rx = this.tx = this.flow = null;
     this.chunk = MIN_CHUNK;
+    this.noResponse = false;   // true : écritures sans accusé (writeValueWithoutResponse) + contrôle de débit
     this.flowFree = null;      // place libre annoncée par le Flipper (octets), null = inconnue
     this.flowWaiters = [];
     this._onFlow = (ev) => {
@@ -419,6 +420,46 @@ export class Flipper extends EventTarget {
 
   // ---------- interne ----------
 
+  // Une écriture Bluetooth, avec ou sans accusé selon this.noResponse.
+  async _rawWrite(bytes) {
+    if (this.noResponse && this.rx.writeValueWithoutResponse) return this.rx.writeValueWithoutResponse(bytes);
+    if (this.rx.writeValueWithResponse) return this.rx.writeValueWithResponse(bytes);
+    return this.rx.writeValue(bytes);
+  }
+
+  // Ping d'une taille donnée envoyé en UNE écriture (diagnostic). Renvoie la latence en ms.
+  async rawPing(size, { readFirst = false } = {}) {
+    const id = this.nextId;
+    this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
+    let frame = null;
+    for (let n = 1; n <= size; n++) {
+      const f = encodeRequest(id, F.pingRequest, fieldBytes(1, crypto.getRandomValues(new Uint8Array(n))));
+      if (f.length > size) break;
+      frame = f;
+    }
+    const reply = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('pas de réponse')); }, 4000);
+      this.pending.set(id, { parts: [], resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+    });
+    reply.catch(() => {});
+    const t0 = performance.now();
+    const w = this.writeChain.then(async () => {
+      if (readFirst) await this._readFree();
+      await this._rawWrite(frame);
+    });
+    this.writeChain = w.catch(() => {});
+    try {
+      await w;
+    } catch (e) {
+      const p = this.pending.get(id);
+      this.pending.delete(id);
+      if (p) p.resolve(null);
+      throw new Error('écriture de ' + frame.length + ' octets : ' + errText(e));
+    }
+    await reply;
+    return Math.round(performance.now() - t0);
+  }
+
   // Lit la place réellement libre dans le tampon du Flipper (null si la caractéristique manque).
   async _readFree() {
     if (!this.flow) return null;
@@ -468,8 +509,7 @@ export class Flipper extends EventTarget {
       const part = bytes.subarray(o, o + this.chunk);
       await this._waitFlow(part.length);
       try {
-        if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
-        else await this.rx.writeValue(part);
+        await this._rawWrite(part);
       } catch (e) {
         // Écriture avec réponse refusée : les octets n'ont pas été pris, on peut les renvoyer plus petits.
         if (this.chunk > MIN_CHUNK && this.rx) {

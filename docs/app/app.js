@@ -1,4 +1,4 @@
-import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK } from './flipper.js';
+import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK, encodePath, F } from './flipper.js';
 import { BridgeClient } from './bridge.js';
 import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
@@ -812,6 +812,49 @@ $('probe').addEventListener('click', async () => {
     $('probe').disabled = false;
     selectTab('log');
   }
+});
+
+// ---------- Diagnostic d'écriture ----------
+// Essaie séparément chaque différence entre un ping (qui passe) et l'installation d'une app (refusée).
+$('diag').addEventListener('click', async () => {
+  if (!flipper.connected) { log('Diagnostic : connecte d\'abord le Flipper.', 'err'); return; }
+  $('diag').disabled = true;
+  selectTab('log');
+  const dir = '/ext/apps_data/flipper_bridge';
+  const bytes = (n) => Uint8Array.from({ length: n }, (_, i) => 32 + (i % 90));
+  const step = async (label, fn) => {
+    try { const r = await fn(); log('  OK    ' + label + (r !== undefined ? ' (' + r + ')' : ''), 'ok'); return true; }
+    catch (e) { log('  ÉCHEC ' + label + ' : ' + errText(e), 'err'); return false; }
+  };
+  const savedChunk = flipper.chunk;
+  log('Diagnostic d\'écriture (écriture sans accusé ' + (flipper.rx.writeValueWithoutResponse ? 'disponible' : 'ABSENTE') + ', envois de ' + flipper.chunk + ' octets) :');
+  try {
+    await step('ping 20 octets', () => flipper.rawPing(20).then((ms) => ms + ' ms'));
+    await step('ping 240 octets', () => flipper.rawPing(240).then((ms) => ms + ' ms'));
+    await step('lecture de la place libre puis ping 240', () => flipper.rawPing(240, { readFirst: true }).then((ms) => ms + ' ms'));
+    await step('mkdir d\'un dossier existant (/ext/apps)', () => flipper.request(F.storageMkdir, encodePath('/ext/apps'))
+      .then(() => 'créé', (e) => { if (e.status === 6) return 'existe déjà, normal'; throw e; }));
+    await step('ping 240 juste après', () => flipper.rawPing(240).then((ms) => ms + ' ms'));
+    await step('création de ' + dir, () => flipper.mkdirs(dir));
+    await step('écriture 100 octets (1 message)', () => flipper.write(dir + '/test1.txt', bytes(100)));
+    await step('écriture 1500 octets (3 messages)', () => flipper.write(dir + '/test2.txt', bytes(1500)));
+    await step('relecture des 1500 octets', async () => {
+      const back = await flipper.read(dir + '/test2.txt');
+      const want = bytes(1500);
+      if (back.length !== 1500 || !back.every((v, i) => v === want[i])) throw new Error('contenu différent (' + back.length + ' octets)');
+      return 'identique';
+    });
+    if (flipper.rx && flipper.rx.writeValueWithoutResponse) {
+      flipper.noResponse = true;
+      await step('SANS ACCUSÉ : ping 240', () => flipper.rawPing(240).then((ms) => ms + ' ms'));
+      await step('SANS ACCUSÉ : écriture 1500 octets', () => flipper.write(dir + '/test3.txt', bytes(1500)));
+    }
+  } finally {
+    flipper.noResponse = false;
+    flipper.chunk = savedChunk;
+    $('diag').disabled = false;
+  }
+  log('Diagnostic terminé : Copier, puis envoie le journal. Si une étape a échoué, reconnecte le Flipper ensuite.');
 });
 
 // ---------- Mise à jour de l'app ----------
