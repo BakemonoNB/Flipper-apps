@@ -5,3 +5,5 @@
 - Scripts JS (mJS) dans `scripts/`.
 - L'utilisateur travaille souvent depuis son téléphone : le déploiement passe par l'app mobile Flipper (Bluetooth), sans CLI ni USB. Tout ce qui dépend de l'USB (Bad USB, HID USB) se teste sur le PC Windows.
 - Le conteneur cloud ne joint pas `update.flipperzero.one` par défaut : sans ce domaine autorisé, ufbt ne peut pas télécharger le SDK.
+- Pont VPS : code dans `server/` (écrit ici), déployé par l'agent du VPS (infra seulement : systemd, Caddy, timer de déploiement). `/health` public, `/logs` protégé par `LOGS_TOKEN` (jamais dans le chat : passer par le formulaire de secret de l'environnement cloud).
+- Avant de demander une info sur le VPS à l'utilisateur, chercher dans le brain (`bakemononb/brain`, `_Claude/`).
