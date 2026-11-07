@@ -106,7 +106,7 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, 
 
   // Demande au téléphone d'exécuter un outil. Résout {ok, result|error}.
   // origin sert uniquement à l'affichage sur le téléphone ; il ne donne aucun droit.
-  function call(tool, args = {}, origin = 'api') {
+  function call(tool, args = {}, origin = 'api', { timeoutMs = callTimeoutMs } = {}) {
     if (typeof tool !== 'string' || !TOOL_NAME.test(tool)) return Promise.reject(new HttpError(400, 'nom d\'outil invalide'));
     if (!args || typeof args !== 'object' || Array.isArray(args)) return Promise.reject(new HttpError(400, 'args doit être un objet'));
     if (!phone) return Promise.reject(new HttpError(409, 'téléphone non connecté'));
@@ -116,7 +116,7 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, 
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new HttpError(504, 'pas de réponse du téléphone'));
-      }, callTimeoutMs);
+      }, timeoutMs);
       pending.set(id, { ws, resolve, reject, timer });
       const from = typeof origin === 'string' && ORIGIN.test(origin) ? origin : 'api';
       ws.send(JSON.stringify({ type: 'call', id, tool, args, origin: from }));

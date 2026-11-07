@@ -3,6 +3,7 @@
 //   PHONE_TOKEN : jeton de l'app téléphone (WebSocket /ws),
 //   API_TOKEN   : jeton des appelants de l'API (/api/*, et /logs),
 //   LOGS_TOKEN  : jeton de lecture du journal (/logs).
+// Compilation : BUILD_URL (http://127.0.0.1:3050), BUILD_TOKEN (service builder/).
 // Chat : STATE_DIR (~/.flipper-bridge), CLAUDE_BIN (claude), CLAUDE_MODEL (vide = modèle par défaut),
 //   OLLAMA_URL (http://127.0.0.1:11434), OLLAMA_MODEL (gpt-oss:20b), OLLAMA_NUM_CTX (8192, celui du prospecteur).
 //   Claude sous l'utilisateur flipper : CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).
@@ -16,6 +17,7 @@ import { acceptUpgrade } from './ws.js';
 import { createBridge, HttpError } from './bridge.js';
 import { requestAuthorized } from './auth.js';
 import { createChat } from './chat.js';
+import { createBuilds } from './builds.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -28,6 +30,8 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || '';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gpt-oss:20b';
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
+const BUILD_URL = process.env.BUILD_URL || 'http://127.0.0.1:3050';
+const BUILD_TOKEN = process.env.BUILD_TOKEN || '';
 const RING_SIZE = 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -52,6 +56,17 @@ export function log(level, msg) {
 
 const hooks = {};
 export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks });
+
+// Outils exécutés sur le VPS ; les autres sont relayés au téléphone.
+// install_fap est interne : seul install_app (donc un .fap sorti du builder) peut l'appeler.
+const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+const INTERNAL_TOOLS = new Set(['install_fap']);
+export async function callTool(name, args, origin) {
+  if (name === 'build_app') return builds.build(args);
+  if (name === 'install_app') return builds.install(args, origin);
+  if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
+  return bridge.call(name, args, origin);
+}
 
 // Dossier d'état (historique du chat, config MCP). Repli dans /tmp plutôt que de planter au démarrage.
 const STATE_DIR = (() => {
@@ -93,7 +108,7 @@ export const chat = createChat({
   ollamaNumCtx: OLLAMA_NUM_CTX,
   log,
   sendToPhone: (obj) => bridge.send(obj),
-  callTool: (name, args, origin) => bridge.call(name, args, origin),
+  callTool: (name, args, origin) => callTool(name, args, origin),
 });
 hooks.onChat = (msg) => { chat.handle(msg); };
 hooks.onChatReset = (model) => chat.reset(model);
@@ -155,7 +170,7 @@ async function route(req, res) {
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, bridge.status());
     if (req.method === 'POST' && p === '/api/call') {
       const body = await readJson(req);
-      const r = await bridge.call(body.tool, body.args === undefined ? {} : body.args, body.origin);
+      const r = await callTool(body.tool, body.args === undefined ? {} : body.args, body.origin);
       return send(res, 200, r);
     }
   }

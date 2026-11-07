@@ -1,6 +1,6 @@
 import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn } from './flipper.js';
 import { BridgeClient } from './bridge.js';
-import { normPath, isSensitive, checkWritable, checkScript, parentOf, MAX_READ_BYTES, MAX_WRITE_BYTES } from './policy.js';
+import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
 const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
@@ -451,13 +451,33 @@ const TOOLS = {
       throw new Error('impossible de lancer le script. Essais : ' + tried.join(' | '));
     },
   },
+  install_fap: {
+    // Appelé seulement par le serveur (install_app), avec un .fap sorti du builder.
+    level: 'write',
+    check: (a) => {
+      a.path = checkFapPath(a.path);
+      if (typeof a.base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(a.base64)) throw new Error('contenu de l\'app invalide');
+      if (a.base64.length * 3 / 4 > MAX_FAP_BYTES) throw new Error('app trop grosse (1 Mo max)');
+    },
+    describe: (a) => 'installer l\'app ' + a.path.split('/').pop() + ' (' + Math.ceil((a.base64.length * 3 / 4) / 1024) + ' Ko)',
+    preview: async (a) => (typeof a.source === 'string' ? preview(a.source, 8000) : '(code source non fourni)'),
+    run: async (a) => {
+      const bin = atob(a.base64);
+      const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      await flipper.mkdirs(parentOf(a.path));
+      await flipper.write(a.path, bytes);
+      return { path: a.path, size: bytes.length, next: 'start_app avec name = ' + a.path };
+    },
+  },
   start_app: {
-    level: 'action',
+    // Lancer un .fap = exécuter du code (souvent écrit par un modèle) : niveau Exécution.
+    level: (a) => (isFap(a.name) ? 'run' : 'action'),
     check: (a) => {
       if (typeof a.name !== 'string' || !a.name || a.name.length > 128) throw new Error('nom d\'app invalide');
       if (a.args !== undefined && (typeof a.args !== 'string' || a.args.length > 255)) throw new Error('args invalides');
+      if (isFap(a.name)) a.name = normPath(a.name);
     },
-    describe: (a) => 'ouvrir l\'app ' + a.name + (a.args ? ' avec ' + a.args : ''),
+    describe: (a) => (isFap(a.name) ? 'lancer l\'app ' + a.name.split('/').pop() : 'ouvrir l\'app ' + a.name) + (a.args ? ' avec ' + a.args : ''),
     run: async (a) => { await flipper.startApp(a.name, a.args || ''); return { started: a.name }; },
   },
 };
@@ -485,13 +505,17 @@ function pumpConfirm() {
   $('cLevel').className = 'eyebrow' + (risky ? ' emit' : '');
   $('cTitle').textContent = (ORIGINS[c.origin] || c.origin) + ' veut ' + c.summary;
   $('cDesc').textContent = {
-    run: 'Un script peut taper au clavier d\'un ordinateur branché en USB (Bad USB) ou piloter les broches GPIO. Lis le code.',
+    run: c.tool === 'start_app'
+      ? 'Une app compilée a accès à tout le Flipper (radio, USB, GPIO, fichiers). Ne la lance que si tu as validé son code.'
+      : 'Un script peut taper au clavier d\'un ordinateur branché en USB (Bad USB) ou piloter les broches GPIO. Lis le code.',
     emit: 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.',
     sensitive: 'Ce dossier peut contenir des copies de badges, de cartes ou de clés.',
-    write: 'Le fichier sera créé ou remplacé sur la carte SD.',
+    write: c.tool === 'install_fap' ? 'Code source de l\'app ci-dessous. Installer ne la lance pas.' : 'Le fichier sera créé ou remplacé sur la carte SD.',
   }[c.level] || 'Regarde l\'écran du Flipper si besoin.';
   const args = { ...c.args };
   if (typeof args.content === 'string') args.content = '(' + args.content.length + ' caractères, voir ci-dessous)';
+  if (typeof args.base64 === 'string') args.base64 = '(' + Math.round(args.base64.length * 3 / 4) + ' octets)';
+  if (typeof args.source === 'string') args.source = '(voir ci-dessous)';
   $('cDetail').textContent = c.tool + ' ' + JSON.stringify(args);
   $('cPreview').hidden = !c.preview;
   $('cPreview').textContent = c.preview || '';

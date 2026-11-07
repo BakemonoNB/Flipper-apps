@@ -21,6 +21,7 @@ Apps et scripts pour Flipper Zero.
   - Outils des modèles : `tools.js` (descriptions) ; niveaux et validation : `docs/app/app.js` (`TOOLS`) ; règles de chemins : `docs/app/policy.js`.
     `ping`, `get_screen` (image pour Claude, texte pour gpt-oss), `list_files`, `read_file` (lecture ; dossiers nfc/lfrfid/ibutton/subghz/u2f : validation), `write_file` et `delete_file` (validation, seulement `/ext/apps/Scripts/` et `/ext/apps_data/`), `press_button` et `start_app` (validation), `run_script` (validation avec le code affiché).
   - `server/workspace/` : dossier de travail de Claude (guide `CLAUDE.md` + types du SDK JS officiel, GPL-3.0).
+  - Apps C : `build_app` et `install_app` s'exécutent sur le VPS (`server/builds.js`) : compilation par le service `builder/` (`BUILD_URL`, `BUILD_TOKEN`), puis installation par le téléphone (outil interne `install_fap`, validation avec le code source). Lancer un `.fap` avec `start_app` = niveau Exécution.
 
 ## Déploiement
 

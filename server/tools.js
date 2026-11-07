@@ -54,6 +54,24 @@ export const TOOLS = [
     inputSchema: obj({ path: path('Exemple : /ext/apps/Scripts/mon_script.js') }, ['path']),
   },
   {
+    name: 'build_app',
+    description: 'Compile une app C pour le Flipper (firmware officiel 1.5.1, API 88.2) dans un conteneur isolé sur le VPS. '
+      + 'files : {"application.fam": "...", "mon_app.c": "..."} (texte). Renvoie build_id, appid, taille et le journal '
+      + '(erreurs du compilateur à corriger). N\'installe rien : ensuite install_app.',
+    inputSchema: obj({
+      files: { type: 'object', additionalProperties: { type: 'string' }, description: 'Chemin relatif -> contenu texte' },
+    }, ['files']),
+  },
+  {
+    name: 'install_app',
+    description: 'Installe sur le Flipper une app compilée par build_app (Mikha valide, il voit le code). '
+      + 'Elle va dans /ext/apps/<category>/<appid>.fap. Ensuite start_app avec ce chemin pour la lancer, get_screen pour vérifier.',
+    inputSchema: obj({
+      build_id: { type: 'string', description: 'Renvoyé par build_app' },
+      category: { type: 'string', description: 'Dossier : Tools (défaut), Games, GPIO, Misc…' },
+    }, ['build_id']),
+  },
+  {
     name: 'start_app',
     description: 'Ouvre une app du Flipper par son nom ou le chemin de son .fap, avec un argument facultatif (souvent un fichier à ouvrir).',
     inputSchema: obj({
@@ -75,5 +93,8 @@ export const ollamaTools = () => TOOLS.map((t) => ({
 export function shrinkArgs(args) {
   const a = { ...(args || {}) };
   if (typeof a.content === 'string') a.content = '(' + a.content.length + ' caractères)';
+  if (a.files && typeof a.files === 'object') {
+    a.files = Object.fromEntries(Object.entries(a.files).map(([k, v]) => [k, '(' + String(v).length + ' caractères)']));
+  }
   return a;
 }

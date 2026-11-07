@@ -142,6 +142,16 @@ test('gros message (longueur sur 64 bits) accepté, message > 1 Mo refusé (1009
   assert.equal(await closedWith(t), 1009);
 });
 
+test('install_fap est interne : refusé par l\'API', async () => {
+  const t = await phone();
+  const r = await (await api('/api/call', { method: 'POST', body: JSON.stringify({ tool: 'install_fap', args: { path: '/ext/apps/Tools/x.fap', base64: 'AAAA' } }) })).json();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /interne/);
+  assert.equal(t.calls.length, 0);
+  t.ws.close();
+  await closedWith(t);
+});
+
 test('route inconnue -> 404', async () => {
   assert.equal((await fetch(base + '/nimporte')).status, 404);
 });

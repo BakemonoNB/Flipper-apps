@@ -29,3 +29,64 @@ Tu pilotes le Flipper Zero de Mikha à travers des outils (serveur MCP « flippe
 - Scripts : `/ext/apps/Scripts/`. Données des scripts : `/ext/apps_data/<nom>/`.
 - Apps intégrées : `start_app` avec leur nom ; apps externes : chemin du `.fap` (`list_files /ext/apps`).
 - Écran : 128x64 monochrome. `get_screen` te renvoie une image.
+
+## Écrire, compiler et tester une app C (.fap)
+1. Prépare au minimum `application.fam` et un fichier `.c`. API du firmware 1.5.1 (88.2) : n'utilise que l'API publique (`furi.h`, `gui/gui.h`, `input/input.h`, `notification/notification_messages.h`, `storage/storage.h`…).
+2. `build_app` avec `files`. Si `ok` est faux, lis `log` (erreurs du compilateur), corrige, recompile.
+3. `install_app` avec le `build_id` (catégorie `Tools` par défaut). Mikha voit le code et valide.
+4. `start_app` avec le chemin renvoyé (`/ext/apps/Tools/<appid>.fap`), puis `get_screen`. Mikha valide le lancement.
+5. Pour quitter : `press_button` back (court ou long selon ton app).
+
+Exemple de base (affiche un texte, quitte avec back) :
+
+`application.fam`
+```python
+App(
+    appid="bonjour",
+    name="Bonjour",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="bonjour_app",
+    stack_size=2 * 1024,
+    fap_category="Tools",
+)
+```
+
+`bonjour.c`
+```c
+#include <furi.h>
+#include <gui/gui.h>
+#include <input/input.h>
+
+static void draw_cb(Canvas* canvas, void* ctx) {
+    UNUSED(ctx);
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 30, 32, "Bonjour Mikha");
+}
+
+static void input_cb(InputEvent* event, void* ctx) {
+    furi_message_queue_put((FuriMessageQueue*)ctx, event, FuriWaitForever);
+}
+
+int32_t bonjour_app(void* p) {
+    UNUSED(p);
+    FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    ViewPort* vp = view_port_alloc();
+    view_port_draw_callback_set(vp, draw_cb, NULL);
+    view_port_input_callback_set(vp, input_cb, queue);
+    Gui* gui = furi_record_open(RECORD_GUI);
+    gui_add_view_port(gui, vp, GuiLayerFullscreen);
+
+    InputEvent ev;
+    while(furi_message_queue_get(queue, &ev, FuriWaitForever) == FuriStatusOk) {
+        if(ev.type == InputTypeShort && ev.key == InputKeyBack) break;
+    }
+
+    gui_remove_view_port(gui, vp);
+    view_port_free(vp);
+    furi_record_close(RECORD_GUI);
+    furi_message_queue_free(queue);
+    return 0;
+}
+```
+Toujours libérer ce qui est alloué : une app qui fuit ou plante peut redémarrer le Flipper.
