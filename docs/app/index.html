@@ -32,6 +32,8 @@
   .app { max-width: 560px; margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) 16px 0; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  /* Les zones (onglets) reçoivent le focus par programme : pas de contour, il apparaissait en bleu sur iOS. */
+  [tabindex="-1"]:focus, [tabindex="-1"]:focus-visible { outline: none; }
   h1, h2, h3 { margin: 0; }
 
   /* Boutons */

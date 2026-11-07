@@ -1,4 +1,4 @@
-import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn } from './flipper.js';
+import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText } from './flipper.js';
 import { BridgeClient } from './bridge.js';
 import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
@@ -196,6 +196,7 @@ async function connectFlow() {
   await flipper.connect();
   battery = await flipper.battery();
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
+  log(flipper.flowFree !== null ? 'Contrôle de débit : ' + flipper.flowFree + ' octets libres' : 'Contrôle de débit indisponible');
   announce('Flipper connecté');
   render();
   sendState();
@@ -229,7 +230,8 @@ flipper.addEventListener('disconnected', () => {
   render();
   sendState();
 });
-flipper.addEventListener('error', (e) => log('Erreur de flux : ' + e.detail.message, 'err'));
+flipper.addEventListener('error', (e) => log('Erreur de flux : ' + errText(e.detail), 'err'));
+flipper.addEventListener('notice', (e) => log('Bluetooth : ' + e.detail, 'err'));
 flipper.addEventListener('unsolicited', (e) =>
   log('Message non attendu : id=' + e.detail.id + ' champs=' + e.detail.fields.map((f) => f.field).join(',')));
 
@@ -464,8 +466,12 @@ const TOOLS = {
     run: async (a) => {
       const bin = atob(a.base64);
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-      await flipper.mkdirs(parentOf(a.path));
-      await flipper.write(a.path, bytes);
+      try { await flipper.mkdirs(parentOf(a.path)); }
+      catch (e) { throw new Error('création du dossier ' + parentOf(a.path) + ' : ' + errText(e)); }
+      const t0 = performance.now();
+      try { await flipper.write(a.path, bytes); }
+      catch (e) { throw new Error('écriture de ' + bytes.length + ' octets : ' + errText(e)); }
+      log('App écrite : ' + bytes.length + ' octets en ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s');
       return { path: a.path, size: bytes.length, next: 'start_app avec name = ' + a.path };
     },
   },
@@ -573,7 +579,7 @@ async function handleCall({ id, tool, args, origin }) {
     log(who + ' → ' + tool + (a.path ? ' ' + a.path : '') + how + ' : OK', level === 'read' ? 'ok' : 'auto');
     bridge.reply(id, true, result);
   } catch (e) {
-    fail(e && e.message ? e.message : String(e));
+    fail(errText(e));
   }
 }
 

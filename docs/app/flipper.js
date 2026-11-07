@@ -47,7 +47,18 @@ const STATUS = {
 };
 
 // Taille des morceaux écrits : sous la MTU que négocie iOS, pour éviter les écritures longues.
+// Si le Flipper ou iOS refuse 180 octets, on repasse à 20 (taille garantie par Bluetooth).
 const WRITE_CHUNK = 180;
+const MIN_CHUNK = 20;
+
+// Texte lisible pour toute erreur, y compris les codes bruts (nombres) que renvoie parfois Bluefy.
+export function errText(e) {
+  if (e instanceof Error || (e && typeof e === 'object' && 'message' in e)) {
+    const name = e.name && e.name !== 'Error' ? e.name : '';
+    return [name, e.message].filter(Boolean).join(' : ') || 'erreur sans message';
+  }
+  return 'code brut ' + String(e);
+}
 
 // ---------- Protobuf minimal ----------
 
@@ -171,6 +182,7 @@ export class Flipper extends EventTarget {
     super();
     this.device = null;
     this.rx = this.tx = this.flow = null;
+    this.chunk = WRITE_CHUNK;
     this.flowFree = null;      // place libre annoncée par le Flipper (octets), null = inconnue
     this.flowWaiters = [];
     this._onFlow = (ev) => {
@@ -370,13 +382,25 @@ export class Flipper extends EventTarget {
     // Une seule opération GATT à la fois : Web Bluetooth refuse les écritures simultanées.
     // TODO étape 5 : respecter la place libre annoncée par `flow` pour les gros transferts.
     const run = async () => {
-      for (let o = 0; o < bytes.length; o += WRITE_CHUNK) {
+      let o = 0;
+      while (o < bytes.length) {
         if (!this.rx) throw new Error('Flipper déconnecté');
-        const part = bytes.subarray(o, o + WRITE_CHUNK);
+        const part = bytes.subarray(o, o + this.chunk);
         await this._waitFlow(part.length);
-        if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
-        else await this.rx.writeValue(part);
+        try {
+          if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
+          else await this.rx.writeValue(part);
+        } catch (e) {
+          // Écriture avec réponse refusée : les octets n'ont pas été pris, on peut les renvoyer plus petits.
+          if (this.chunk > MIN_CHUNK && this.rx) {
+            this.chunk = MIN_CHUNK;
+            this.dispatchEvent(new CustomEvent('notice', { detail: 'écriture de ' + part.length + ' octets refusée (' + errText(e) + ') : passage à des morceaux de ' + MIN_CHUNK + ' octets' }));
+            continue;
+          }
+          throw new Error('écriture Bluetooth refusée (' + part.length + ' octets) : ' + errText(e));
+        }
         if (this.flowFree !== null) this.flowFree = Math.max(0, this.flowFree - part.length);
+        o += part.length;
       }
     };
     const p = this.writeChain.then(run);
