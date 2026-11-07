@@ -16,6 +16,7 @@ for (const required of ['-p', '--strict-mcp-config', '--verbose']) {
 if (!opt('--allowedTools').split(',').includes('mcp__flipper__ping')) { process.stderr.write('ping non autorisé\n'); process.exit(2); }
 if (!opt('--disallowedTools').split(',').includes('Bash')) { process.stderr.write('Bash non interdit\n'); process.exit(2); }
 if (opt('--allowedTools').split(',').some((t) => !t.startsWith('mcp__flipper__'))) { process.stderr.write('outil non Flipper autorisé\n'); process.exit(2); }
+for (const k of ['PHONE_TOKEN', 'API_TOKEN', 'LOGS_TOKEN', 'BUILD_TOKEN']) if (process.env[k]) { process.stderr.write(k + ' transmis à Claude\n'); process.exit(2); }
 if (prompt.includes('ÉCHEC')) { process.stderr.write('erreur simulée\n'); process.exit(1); }
 
 const resumed = opt('--resume');

@@ -7,6 +7,17 @@ import { spawn } from 'node:child_process';
 const MCP_PREFIX = 'mcp__flipper__';
 const DENIED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task'];
 
+// Environnement minimal : jamais PHONE_TOKEN, API_TOKEN ni LOGS_TOKEN. Claude Code refuse aujourd'hui de lire
+// /proc, mais c'est une protection interne qui peut changer : on ne lui donne simplement pas ces jetons.
+// (Le serveur MCP Flipper reçoit API_TOKEN par sa propre config, pas par cet environnement.)
+const KEEP_ENV = ['HOME', 'PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'CLAUDE_CODE_OAUTH_TOKEN'];
+export function claudeEnv(src = process.env) {
+  const env = {};
+  for (const k of KEEP_ENV) if (src[k]) env[k] = src[k];
+  env.DISABLE_AUTOUPDATER = '1'; // le service n'a pas le droit de mettre à jour /usr/bin/claude
+  return env;
+}
+
 // onEvent({event:'text', text}) | onEvent({event:'tool', tool, args})
 // Résout {sessionId}. Rejette avec une Error lisible.
 export function runClaude({ bin = 'claude', model = '', text, sessionId = null, systemPrompt, mcpConfigPath,
@@ -28,7 +39,7 @@ export function runClaude({ bin = 'claude', model = '', text, sessionId = null, 
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(bin, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { cwd, env: claudeEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       reject(new Error('Claude introuvable : ' + e.message));
       return;
