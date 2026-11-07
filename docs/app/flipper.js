@@ -46,10 +46,11 @@ const STATUS = {
   22: 'ERROR_APP_CMD_ERROR',
 };
 
-// Taille des morceaux écrits : sous la MTU que négocie iOS, pour éviter les écritures longues.
-// Si le Flipper ou iOS refuse 180 octets, on repasse à 20 (taille garantie par Bluetooth).
-const WRITE_CHUNK = 180;
-const MIN_CHUNK = 20;
+// Taille des morceaux écrits. 20 octets tiennent toujours dans une seule écriture Bluetooth.
+// Au-delà, iOS peut faire une « écriture longue » que le Flipper refuse (code 2 vu dans Bluefy),
+// et la connexion reste ensuite bloquée. probeChunk() mesure la plus grande taille acceptée.
+export const MIN_CHUNK = 20;
+export const PROBE_SIZES = [20, 32, 48, 64, 96, 128, 160, 180, 240];
 
 // Texte lisible pour toute erreur, y compris les codes bruts (nombres) que renvoie parfois Bluefy.
 export function errText(e) {
@@ -182,7 +183,7 @@ export class Flipper extends EventTarget {
     super();
     this.device = null;
     this.rx = this.tx = this.flow = null;
-    this.chunk = WRITE_CHUNK;
+    this.chunk = MIN_CHUNK;
     this.flowFree = null;      // place libre annoncée par le Flipper (octets), null = inconnue
     this.flowWaiters = [];
     this._onFlow = (ev) => {
@@ -294,6 +295,46 @@ export class Flipper extends EventTarget {
     const same = !!echoed && echoed.bytes.length === data.length && echoed.bytes.every((b, i) => b === data[i]);
     if (!same) throw new Error('Réponse au ping incorrecte');
     return performance.now() - t;
+  }
+
+  // Envoie des pings de taille croissante, chacun en UNE écriture, et renvoie la plus grande taille acceptée.
+  // Après un refus, la connexion peut rester bloquée : il faut se reconnecter.
+  async probeChunk(onStep = () => {}) {
+    let best = 0;
+    for (const size of PROBE_SIZES) {
+      const id = this.nextId;
+      this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
+      // Trame ping = longueur + command_id + champ 5 { champ 1 = données } : plus grande trame <= size.
+      let frame = null;
+      for (let n = 1; n <= size; n++) {
+        const f = encodeRequest(id, F.pingRequest, fieldBytes(1, crypto.getRandomValues(new Uint8Array(n))));
+        if (f.length > size) break;
+        frame = f;
+      }
+      const reply = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('pas de réponse')); }, 4000);
+        this.pending.set(id, { parts: [], resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      });
+      reply.catch(() => {}); // évite un rejet non traité si l'écriture échoue avant
+      try {
+        const w = this.writeChain.then(async () => {
+          if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(frame);
+          else await this.rx.writeValue(frame);
+        });
+        this.writeChain = w.catch(() => {});
+        await w;
+        await reply;
+        best = frame.length;
+        onStep(frame.length, true);
+      } catch (e) {
+        const p = this.pending.get(id);
+        this.pending.delete(id);
+        if (p) p.resolve(null); // arrête son minuteur
+        onStep(frame.length, false, errText(e));
+        break;
+      }
+    }
+    return best;
   }
 
   startScreen() { return this.request(F.guiStartScreenStream); }

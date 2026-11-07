@@ -1,4 +1,4 @@
-import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText } from './flipper.js';
+import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK } from './flipper.js';
 import { BridgeClient } from './bridge.js';
 import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
@@ -192,11 +192,14 @@ document.addEventListener('visibilitychange', () => {
   bridge.wake();
 });
 
+const CHUNK_KEY = 'flipper-chunk';
 async function connectFlow() {
   await flipper.connect();
+  const saved = parseInt(store.get(CHUNK_KEY) || '', 10);
+  flipper.chunk = Number.isInteger(saved) && saved >= MIN_CHUNK ? saved : MIN_CHUNK;
   battery = await flipper.battery();
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
-  log(flipper.flowFree !== null ? 'Contrôle de débit : ' + flipper.flowFree + ' octets libres' : 'Contrôle de débit indisponible');
+  log((flipper.flowFree !== null ? 'Contrôle de débit : ' + flipper.flowFree + ' octets libres' : 'Contrôle de débit indisponible') + ' · envois de ' + flipper.chunk + ' octets');
   announce('Flipper connecté');
   render();
   sendState();
@@ -785,6 +788,27 @@ $('chatText').addEventListener('keydown', (e) => {
 $('chatReset').addEventListener('click', () => {
   if (chat.current && !chat.live && confirm('Effacer la conversation avec ' + (ORIGINS[chat.current] || chat.current) + ' ?')) {
     bridge.send({ type: 'chat_reset', model: chat.current });
+  }
+});
+
+// ---------- Test de l'envoi Bluetooth ----------
+$('probe').addEventListener('click', async () => {
+  if (!flipper.connected) { log('Test Bluetooth : connecte d\'abord le Flipper.', 'err'); return; }
+  $('probe').disabled = true;
+  log('Test Bluetooth : envois de taille croissante…');
+  try {
+    const best = await flipper.probeChunk((size, ok, why) => log('  ' + size + ' octets : ' + (ok ? 'OK' : 'refusé (' + why + ')'), ok ? 'ok' : 'err'));
+    if (best >= MIN_CHUNK) {
+      store.set(CHUNK_KEY, String(best));
+      flipper.chunk = best;
+      log('Test Bluetooth : les transferts utiliseront ' + best + ' octets par envoi.', 'ok');
+    } else {
+      log('Test Bluetooth : même 20 octets sont refusés.', 'err');
+    }
+    if (best < 240) log('Après un refus, déconnecte puis reconnecte le Flipper avant de continuer.', 'err');
+  } finally {
+    $('probe').disabled = false;
+    selectTab('log');
   }
 });
 
