@@ -421,10 +421,13 @@ export class Flipper extends EventTarget {
   // ---------- interne ----------
 
   // Une écriture Bluetooth, avec ou sans accusé selon this.noResponse.
+  // Toujours une COPIE exacte : Bluefy semble envoyer tout le tampon sous-jacent d'une vue (subarray),
+  // ce qui transformait chaque morceau en message entier (refusé, code 2).
   async _rawWrite(bytes) {
-    if (this.noResponse && this.rx.writeValueWithoutResponse) return this.rx.writeValueWithoutResponse(bytes);
-    if (this.rx.writeValueWithResponse) return this.rx.writeValueWithResponse(bytes);
-    return this.rx.writeValue(bytes);
+    const data = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes : bytes.slice();
+    if (this.noResponse && this.rx.writeValueWithoutResponse) return this.rx.writeValueWithoutResponse(data);
+    if (this.rx.writeValueWithResponse) return this.rx.writeValueWithResponse(data);
+    return this.rx.writeValue(data);
   }
 
   // Ping d'une taille donnée envoyé en UNE écriture (diagnostic). Renvoie la latence en ms.
