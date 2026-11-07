@@ -90,6 +90,11 @@ test('appel de bout en bout : API -> téléphone -> API', async () => {
   const r = await api('/api/call', { method: 'POST', body: JSON.stringify({ tool: 'ping', args: { n: 1 } }) });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, result: { tool: 'ping', args: { n: 1 } } });
+  assert.equal(t.calls.at(-1).origin, 'api');
+  await api('/api/call', { method: 'POST', body: JSON.stringify({ tool: 'ping', origin: 'claude' }) });
+  assert.equal(t.calls.at(-1).origin, 'claude');
+  await api('/api/call', { method: 'POST', body: JSON.stringify({ tool: 'ping', origin: '<script>' }) });
+  assert.equal(t.calls.at(-1).origin, 'api');
   t.ws.close();
   await closedWith(t);
 });

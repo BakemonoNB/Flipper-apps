@@ -97,7 +97,8 @@ test('gpt-oss : appel d\'outil via le téléphone, puis réponse en morceaux', a
   assert.equal(req.model, 'gpt-oss:20b');
   assert.equal(req.options.num_ctx, 8192);
   assert.equal(req.messages[0].role, 'system');
-  assert.deepEqual(req.tools.map((x) => x.function.name), ['ping']);
+  assert.deepEqual(req.tools.map((x) => x.function.name), ['ping', 'press_button']);
+  assert.equal(t.calls[0].origin, 'gpt-oss');
   assert.equal(ollamaRequests[1].messages.at(-1).role, 'tool');
   t.ws.close();
 });
@@ -122,7 +123,8 @@ test('Claude : options de sécurité, outil ping via le serveur MCP, puis repris
   let ev = eventsOf(t, 'c1');
   assert.deepEqual(ev.map((e) => e.event), ['tool', 'text', 'done'], JSON.stringify(ev));
   assert.equal(ev[0].tool, 'ping');
-  assert.match(ev[1].text, /outils=ping proto=2025-06-18 ping=\{"latencyMs":42\}/);
+  assert.match(ev[1].text, /outils=ping,press_button proto=2025-06-18 ping=\{"latencyMs":42\}/);
+  assert.equal(t.calls.at(-1).origin, 'claude');
 
   chat(t, 'claude', 'et maintenant ?', 'c2');
   await until(() => eventsOf(t, 'c2').some((e) => e.event === 'done' || e.event === 'error'));

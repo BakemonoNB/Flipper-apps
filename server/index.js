@@ -74,7 +74,7 @@ writeFileSync(mcpConfigPath, JSON.stringify({
       type: 'stdio',
       command: process.execPath,
       args: [fileURLToPath(new URL('./mcp-flipper.js', import.meta.url))],
-      env: { FLIPPER_API_URL: 'http://127.0.0.1:' + PORT, API_TOKEN },
+      env: { FLIPPER_API_URL: 'http://127.0.0.1:' + PORT, API_TOKEN, FLIPPER_ORIGIN: 'claude' },
     },
   },
 }), { mode: 0o600 });
@@ -92,7 +92,7 @@ export const chat = createChat({
   ollamaNumCtx: OLLAMA_NUM_CTX,
   log,
   sendToPhone: (obj) => bridge.send(obj),
-  callTool: (name, args) => bridge.call(name, args),
+  callTool: (name, args, origin) => bridge.call(name, args, origin),
 });
 hooks.onChat = (msg) => { chat.handle(msg); };
 hooks.onChatReset = (model) => chat.reset(model);
@@ -154,7 +154,7 @@ async function route(req, res) {
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, bridge.status());
     if (req.method === 'POST' && p === '/api/call') {
       const body = await readJson(req);
-      const r = await bridge.call(body.tool, body.args === undefined ? {} : body.args);
+      const r = await bridge.call(body.tool, body.args === undefined ? {} : body.args, body.origin);
       return send(res, 200, r);
     }
   }

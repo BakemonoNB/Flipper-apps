@@ -7,13 +7,14 @@
 //                          {type:'result', id, ok, result|error}
 //                          {type:'chat', …} {type:'chat_reset', …}   voir chat.js
 //   serveur -> téléphone : {type:'welcome', commit, models}
-//                          {type:'call', id, tool, args}
+//                          {type:'call', id, tool, args, origin}   origin : modèle à l'origine (affichage seulement)
 //                          {type:'chat_event', …} {type:'chat_history', …}   voir chat.js
 import { tokenOk } from './auth.js';
 
 const AUTH_TIMEOUT_MS = 5000;
 const HEARTBEAT_MS = 25000;
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,39}$/;
+const ORIGIN = /^[a-z0-9-]{1,20}$/;
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -104,7 +105,8 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, 
   }
 
   // Demande au téléphone d'exécuter un outil. Résout {ok, result|error}.
-  function call(tool, args = {}) {
+  // origin sert uniquement à l'affichage sur le téléphone ; il ne donne aucun droit.
+  function call(tool, args = {}, origin = 'api') {
     if (typeof tool !== 'string' || !TOOL_NAME.test(tool)) return Promise.reject(new HttpError(400, 'nom d\'outil invalide'));
     if (!args || typeof args !== 'object' || Array.isArray(args)) return Promise.reject(new HttpError(400, 'args doit être un objet'));
     if (!phone) return Promise.reject(new HttpError(409, 'téléphone non connecté'));
@@ -116,8 +118,9 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, 
         reject(new HttpError(504, 'pas de réponse du téléphone'));
       }, callTimeoutMs);
       pending.set(id, { ws, resolve, reject, timer });
-      ws.send(JSON.stringify({ type: 'call', id, tool, args }));
-      log('INFO', 'appel ' + id + ' -> téléphone : ' + tool);
+      const from = typeof origin === 'string' && ORIGIN.test(origin) ? origin : 'api';
+      ws.send(JSON.stringify({ type: 'call', id, tool, args, origin: from }));
+      log('INFO', 'appel ' + id + ' -> téléphone : ' + tool + ' (' + from + ')');
     });
   }
 

@@ -1,5 +1,5 @@
 // Client WebSocket vers le pont du VPS (server/ dans ce repo).
-// Évènements : 'status' (detail: statut), 'call' (detail: {id, tool, args}),
+// Évènements : 'status' (detail: statut), 'call' (detail: {id, tool, args, origin}),
 // 'message' (detail: welcome, chat_event ou chat_history, voir server/chat.js).
 // Statuts : off (non configuré), connecting, online, refused (jeton refusé), replaced, offline.
 
@@ -49,7 +49,7 @@ export class BridgeClient extends EventTarget {
       } else if (msg.type === 'chat_event' || msg.type === 'chat_history') {
         this.dispatchEvent(new CustomEvent('message', { detail: msg }));
       } else if (msg.type === 'call' && Number.isInteger(msg.id) && typeof msg.tool === 'string') {
-        this.dispatchEvent(new CustomEvent('call', { detail: { id: msg.id, tool: msg.tool, args: msg.args || {} } }));
+        this.dispatchEvent(new CustomEvent('call', { detail: { id: msg.id, tool: msg.tool, args: msg.args || {}, origin: typeof msg.origin === 'string' ? msg.origin : 'api' } }));
       }
     };
     ws.onclose = (ev) => {

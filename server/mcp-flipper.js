@@ -6,6 +6,7 @@ import { TOOLS } from './tools.js';
 
 const API = (process.env.FLIPPER_API_URL || 'http://127.0.0.1:3040').replace(/\/$/, '');
 const TOKEN = process.env.API_TOKEN || '';
+const ORIGIN = process.env.FLIPPER_ORIGIN || 'api';
 const DEFAULT_PROTOCOL = '2025-06-18';
 
 const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
@@ -16,7 +17,7 @@ async function callTool(name, args) {
   const res = await fetch(API + '/api/call', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-flipper-token': TOKEN },
-    body: JSON.stringify({ tool: name, args }),
+    body: JSON.stringify({ tool: name, args, origin: ORIGIN }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: body.error || ('HTTP ' + res.status) };

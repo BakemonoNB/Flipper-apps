@@ -4,17 +4,35 @@ import { BridgeClient } from './bridge.js';
 const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
 const bridge = new BridgeClient();
+
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
-const LONG_MS = 500;     // au-delà : appui long
-const REPEAT_MS = 150;   // répétition des flèches pendant un appui long
-const ON = [0, 0, 0];
-const OFF = [255, 130, 0];
+const CHAT_MODEL_KEY = 'flipper-chat-model';
+const TAB_KEY = 'flipper-tab';
+const LONG_MS = 500;            // au-delà : appui long
+const REPEAT_MS = 150;          // répétition des flèches pendant un appui long
+const AUTO_STEP_MS = 15 * 60 * 1000;
+const AUTO_MAX_MS = 2 * 60 * 60 * 1000;
+const CONFIRM_MS = 110 * 1000;  // refus automatique (le serveur abandonne à 120 s)
+const ON = [26, 16, 0];
+const OFF = [255, 139, 26];
 
 let battery = null;
 let busy = null;
+let serverCommit = null;
 
-// ---------- Journal ----------
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
+};
+
+// ---------- Annonces (VoiceOver) et journal ----------
+function announce(msg) {
+  const el = $('announce');
+  el.textContent = '';
+  setTimeout(() => { el.textContent = msg; }, 50);
+}
+
 const logEl = $('log');
 function log(msg, cls) {
   const line = document.createElement('div');
@@ -24,6 +42,32 @@ function log(msg, cls) {
   while (logEl.childElementCount > 300) logEl.firstElementChild.remove();
   logEl.scrollTop = logEl.scrollHeight;
 }
+
+// ---------- Onglets ----------
+const TABS = ['pad', 'chat', 'log', 'settings'];
+let currentTab = 'pad';
+
+function selectTab(name, { focus = false } = {}) {
+  if (!TABS.includes(name)) name = 'pad';
+  currentTab = name;
+  for (const t of TABS) {
+    const tab = $('tab-' + t);
+    const on = t === name;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+    $('panel-' + t).hidden = !on;
+  }
+  if (focus) $('tab-' + name).focus();
+  if (name === 'chat') { chatUnread = 0; renderBadge(); requestAnimationFrame(() => scrollChat()); }
+  store.set(TAB_KEY, name);
+}
+
+for (const t of TABS) $('tab-' + t).addEventListener('click', () => selectTab(t));
+document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
+  const i = TABS.indexOf(currentTab);
+  if (e.key === 'ArrowRight') { selectTab(TABS[(i + 1) % TABS.length], { focus: true }); e.preventDefault(); }
+  if (e.key === 'ArrowLeft') { selectTab(TABS[(i + TABS.length - 1) % TABS.length], { focus: true }); e.preventDefault(); }
+});
 
 // ---------- Écran ----------
 const canvas = $('screen');
@@ -58,23 +102,41 @@ setInterval(() => {
   frames = 0;
 }, 1000);
 
-// ---------- État ----------
+// ---------- État général ----------
+const VPS_LABELS = {
+  off: 'VPS non configuré',
+  connecting: 'VPS : connexion…',
+  online: 'VPS connecté',
+  refused: 'VPS : jeton refusé',
+  replaced: 'VPS : autre appareil',
+  offline: 'VPS hors ligne',
+};
+
+function setChip(el, text, state) {
+  el.className = 'chip' + (state ? ' ' + state : '');
+  el.querySelector('.t').textContent = text;
+}
+
+function shortName() {
+  return (flipper.name || 'Flipper').replace(/^Flipper\s+/, '');
+}
+
 function render() {
   const connected = flipper.connected;
   const main = $('main');
   main.textContent = connected ? 'Déconnecter' : flipper.device ? 'Reconnecter' : 'Connecter';
+  main.className = 'btn ' + (connected ? '' : 'primary');
   main.disabled = !!busy;
-  const status = $('status');
-  status.textContent = busy || (connected
-    ? flipper.name + (battery != null ? ' · ' + battery + ' %' : '')
-    : 'Flipper déconnecté');
-  status.className = 'status' + (connected ? ' on' : '');
-  const vps = $('vpsStatus');
-  vps.textContent = 'VPS : ' + VPS_LABELS[bridge.status];
-  vps.className = 'status small' + (bridge.status === 'online' ? ' on' : bridge.status === 'refused' ? ' bad' : '');
+  setChip($('status'), busy || (connected ? shortName() + (battery != null ? ' · ' + battery + ' %' : '') : 'Flipper hors ligne'),
+    busy ? 'wait' : connected ? 'on' : '');
+  const vs = bridge.status;
+  setChip($('vpsStatus'), VPS_LABELS[vs], vs === 'online' ? 'on' : vs === 'refused' ? 'bad' : vs === 'connecting' ? 'wait' : '');
+  $('deviceName').textContent = connected ? flipper.name : '';
   document.body.classList.toggle('connected', connected);
-  $('other').hidden = connected;
+  $('other').disabled = connected;
   for (const b of document.querySelectorAll('[data-key]')) b.disabled = !connected;
+  $('aboutServer').textContent = serverCommit ? 'commit ' + serverCommit : '—';
+  chatControls();
 }
 
 async function withBusy(msg, fn) {
@@ -84,33 +146,34 @@ async function withBusy(msg, fn) {
     await fn();
   } catch (e) {
     log('Échec : ' + (e && e.message ? e.message : e), 'err');
+    announce('Échec de la connexion');
   } finally {
     busy = null;
     render();
   }
 }
 
-// ---------- Connexion ----------
+// ---------- Connexion au Flipper ----------
 let wakeLock = null;
 async function keepAwake() {
   if (!('wakeLock' in navigator)) {
     log("Garde l'écran allumé : iOS coupe le Bluetooth quand le téléphone se verrouille.");
     return;
   }
-  try {
-    wakeLock = await navigator.wakeLock.request('screen');
-  } catch (e) {
-    log('Mise en veille non bloquée : ' + e.message);
-  }
+  try { wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (e) { log('Mise en veille non bloquée : ' + e.message); }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && flipper.connected && !wakeLock) keepAwake();
+  if (document.visibilityState !== 'visible') return;
+  if (flipper.connected && !wakeLock) keepAwake();
+  bridge.wake();
 });
 
 async function connectFlow() {
   await flipper.connect();
   battery = await flipper.battery();
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
+  announce('Flipper connecté');
   render();
   sendState();
   keepAwake();
@@ -136,7 +199,8 @@ $('other').addEventListener('click', () => {
 
 flipper.addEventListener('screen', (e) => drawFrame(e.detail.data, e.detail.orientation));
 flipper.addEventListener('disconnected', () => {
-  log('Déconnecté.', 'err');
+  log('Flipper déconnecté.', 'err');
+  announce('Flipper déconnecté');
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   render();
   sendState();
@@ -145,31 +209,33 @@ flipper.addEventListener('error', (e) => log('Erreur de flux : ' + e.detail.mess
 flipper.addEventListener('unsolicited', (e) =>
   log('Message non attendu : id=' + e.detail.id + ' champs=' + e.detail.fields.map((f) => f.field).join(',')));
 
-// ---------- Boutons ----------
+// ---------- Manette ----------
 const ARROWS = new Set([Key.UP, Key.DOWN, Key.LEFT, Key.RIGHT]);
+
+function sendInput(key, type, label) {
+  return flipper.input(key, type).catch((e) => log('Bouton ' + label + ' : ' + e.message, 'err'));
+}
 
 for (const btn of document.querySelectorAll('[data-key]')) {
   const key = Key[btn.dataset.key];
   let down = false, longSent = false, longTimer = null, repeatTimer = null;
-  const send = (type) => flipper.input(key, type).catch((e) => log('Bouton ' + btn.dataset.key + ' : ' + e.message, 'err'));
+  const send = (type) => sendInput(key, type, btn.dataset.key);
 
-  btn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
+  const start = (e) => {
+    if (e) e.preventDefault();
     if (!flipper.connected || down) return;
     down = true;
     longSent = false;
-    if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
+    if (e && e.pointerId !== undefined && btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
     btn.classList.add('active');
-    if (navigator.vibrate) navigator.vibrate(10);
     send(InputType.PRESS);
     longTimer = setTimeout(() => {
       longSent = true;
       send(InputType.LONG);
       if (ARROWS.has(key)) repeatTimer = setInterval(() => send(InputType.REPEAT), REPEAT_MS);
     }, LONG_MS);
-  });
-
-  const up = () => {
+  };
+  const end = () => {
     if (!down) return;
     down = false;
     clearTimeout(longTimer);
@@ -178,42 +244,194 @@ for (const btn of document.querySelectorAll('[data-key]')) {
     if (!longSent) send(InputType.SHORT);
     send(InputType.RELEASE);
   };
-  btn.addEventListener('pointerup', up);
-  btn.addEventListener('pointercancel', up);
+  btn.addEventListener('pointerdown', start);
+  btn.addEventListener('pointerup', end);
+  btn.addEventListener('pointercancel', end);
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  // VoiceOver et clavier déclenchent « click » sans pointerdown : appui court.
+  btn.addEventListener('click', (e) => {
+    if (e.detail !== 0 || !flipper.connected) return;
+    send(InputType.PRESS); send(InputType.SHORT); send(InputType.RELEASE);
+  });
 }
 
-// ---------- Pont VPS ----------
-const VPS_LABELS = {
-  off: 'non configuré',
-  connecting: 'connexion…',
-  online: 'connecté',
-  refused: 'jeton refusé',
-  replaced: 'pris par un autre appareil',
-  offline: 'hors ligne, nouvel essai…',
+const KEYBOARD = { ArrowUp: Key.UP, ArrowDown: Key.DOWN, ArrowLeft: Key.LEFT, ArrowRight: Key.RIGHT, Enter: Key.OK, Backspace: Key.BACK };
+document.addEventListener('keydown', (e) => {
+  if (currentTab !== 'pad' || !flipper.connected || e.repeat) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [role="tablist"], dialog')) return;
+  if (e.key === 'Enter' && e.target.closest && e.target.closest('button')) return; // le bouton gère déjà Entrée
+  if (!Object.hasOwn(KEYBOARD, e.key)) return;
+  e.preventDefault();
+  const k = KEYBOARD[e.key];
+  sendInput(k, InputType.PRESS, e.key); sendInput(k, InputType.SHORT, e.key); sendInput(k, InputType.RELEASE, e.key);
+});
+
+// ---------- Mode autonome ----------
+let autoUntil = 0;
+let autoTick = null;
+const autoActive = () => Date.now() < autoUntil;
+const mmss = (ms) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
 
-// Outils que le VPS peut demander. Le niveau est décidé ICI, jamais par le message du serveur.
-// Niveaux : read (sans validation) ; write, action, emit : validation sur le téléphone (étape 5).
+function addAutonomy() {
+  const now = Date.now();
+  const before = autoUntil;
+  autoUntil = Math.min((autoActive() ? autoUntil : now) + AUTO_STEP_MS, now + AUTO_MAX_MS);
+  const added = Math.round((autoUntil - Math.max(before, now)) / 60000);
+  log('Mode autonome : ' + (before > now ? '+' + added + ' min' : 'activé pour ' + added + ' min') + ' (fin à ' +
+    new Date(autoUntil).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ')', 'auto');
+  announce('Mode autonome actif, ' + Math.round((autoUntil - now) / 60000) + ' minutes');
+  clearInterval(autoTick);
+  autoTick = setInterval(renderAuto, 1000);
+  renderAuto();
+}
+
+function stopAutonomy(reason) {
+  if (!autoUntil) return;
+  autoUntil = 0;
+  clearInterval(autoTick);
+  autoTick = null;
+  log('Mode autonome terminé (' + reason + ').', 'auto');
+  announce('Mode autonome terminé');
+  renderAuto();
+}
+
+function renderAuto() {
+  if (autoUntil && !autoActive()) { stopAutonomy('temps écoulé'); return; }
+  const on = autoActive();
+  const left = autoUntil - Date.now();
+  $('auto').classList.toggle('on', on);
+  $('autoTitle').textContent = on ? 'Mode autonome' : 'Validation requise';
+  $('autoSub').innerHTML = '';
+  if (on) {
+    const t = document.createElement('span');
+    t.className = 'time';
+    t.textContent = mmss(left);
+    $('autoSub').append('Les modèles agissent seuls · ', t);
+  } else {
+    $('autoSub').textContent = 'Chaque action te sera demandée';
+  }
+  const atMax = on && left > AUTO_MAX_MS - 60000;
+  $('autoMore').textContent = on ? '+15 min' : 'Autonome 15 min';
+  $('autoMore').disabled = atMax;
+  $('autoMore').title = atMax ? 'Maximum : 2 h' : '';
+  $('autoStop').hidden = !on;
+}
+
+$('autoMore').addEventListener('click', addAutonomy);
+$('autoStop').addEventListener('click', () => stopAutonomy('arrêté par toi'));
+
+// ---------- Outils demandés par le VPS ----------
+// Le niveau est décidé ICI, jamais par le message du serveur.
+const LEVELS = { read: 'Lecture', write: 'Écriture', action: 'Action', emit: 'Émission' };
+const KEY_NAMES = { up: ['Haut', Key.UP], down: ['Bas', Key.DOWN], left: ['Gauche', Key.LEFT], right: ['Droite', Key.RIGHT], ok: ['OK', Key.OK], back: ['Retour', Key.BACK] };
+const ORIGINS = { claude: 'Claude', 'gpt-oss': 'gpt-oss', api: 'Le VPS' };
+
 const TOOLS = {
-  ping: { level: 'read', run: async () => ({ latencyMs: Math.round(await flipper.ping()) }) },
+  ping: {
+    level: 'read',
+    run: async () => ({ latencyMs: Math.round(await flipper.ping()) }),
+  },
+  press_button: {
+    level: 'action',
+    check: (a) => {
+      if (!Object.hasOwn(KEY_NAMES, a.key)) throw new Error('bouton inconnu : ' + a.key);
+      if (a.long !== undefined && typeof a.long !== 'boolean') throw new Error('« long » doit être vrai ou faux');
+    },
+    describe: (a) => 'appuyer sur ' + KEY_NAMES[a.key][0] + (a.long ? ' (appui long)' : ''),
+    run: async (a) => {
+      const k = KEY_NAMES[a.key][1];
+      await flipper.input(k, InputType.PRESS);
+      if (a.long) await new Promise((r) => setTimeout(r, LONG_MS));
+      await flipper.input(k, a.long ? InputType.LONG : InputType.SHORT);
+      await flipper.input(k, InputType.RELEASE);
+      return { pressed: a.key, long: !!a.long };
+    },
+  },
 };
 
-async function handleCall({ id, tool, args }) {
+// File de validations : une fenêtre à la fois.
+const dlg = $('confirm');
+const confirmQueue = [];
+let confirmCurrent = null;
+let confirmTimer = null;
+
+function confirmAction(req) {
+  return new Promise((resolve) => {
+    confirmQueue.push({ ...req, resolve });
+    pumpConfirm();
+  });
+}
+
+function pumpConfirm() {
+  if (confirmCurrent || !confirmQueue.length) return;
+  const c = confirmQueue.shift();
+  if (autoActive()) { c.resolve('allow'); pumpConfirm(); return; } // autonomie activée pendant l'attente
+  confirmCurrent = c;
+  const emit = c.level === 'emit';
+  $('cLevel').textContent = LEVELS[c.level] || c.level;
+  $('cLevel').className = 'eyebrow' + (emit ? ' emit' : '');
+  $('cTitle').textContent = (ORIGINS[c.origin] || c.origin) + ' veut ' + c.summary;
+  $('cDesc').textContent = emit ? 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.' : 'Regarde l\'écran du Flipper si besoin.';
+  $('cDetail').textContent = c.tool + ' ' + JSON.stringify(c.args);
+  const end = Date.now() + CONFIRM_MS;
+  const tick = () => {
+    const left = end - Date.now();
+    $('cCount').textContent = 'Refus automatique dans ' + Math.ceil(left / 1000) + ' s';
+    if (left <= 0) dlg.close('deny');
+  };
+  tick();
+  confirmTimer = setInterval(tick, 1000);
+  dlg.returnValue = '';
+  dlg.showModal();
+  if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
+}
+
+dlg.addEventListener('close', () => {
+  if (!confirmCurrent) return;
+  clearInterval(confirmTimer);
+  const c = confirmCurrent;
+  confirmCurrent = null;
+  c.resolve(['allow', 'auto'].includes(dlg.returnValue) ? dlg.returnValue : 'deny');
+  pumpConfirm();
+});
+
+function cancelAllConfirms() {
+  while (confirmQueue.length) confirmQueue.shift().resolve('deny');
+  if (confirmCurrent) dlg.close('deny');
+}
+
+async function handleCall({ id, tool, args, origin }) {
   const t = Object.hasOwn(TOOLS, tool) ? TOOLS[tool] : null;
-  const fail = (msg) => { log('VPS → ' + tool + ' refusé : ' + msg, 'err'); bridge.reply(id, false, msg); };
+  const who = ORIGINS[origin] || origin;
+  const fail = (msg) => { log(who + ' → ' + tool + ' refusé : ' + msg, 'err'); bridge.reply(id, false, msg); };
   if (!t) return fail('outil inconnu sur le téléphone');
-  if (t.level !== 'read') return fail('validation pas encore disponible');
+  const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  try { if (t.check) t.check(a); } catch (e) { return fail(e.message); }
   if (!flipper.connected) return fail('Flipper non connecté au téléphone');
+  let how = '';
+  if (t.level !== 'read') {
+    if (autoActive()) {
+      how = ' (autonome)';
+    } else {
+      const decision = await confirmAction({ tool, args: a, origin, level: t.level, summary: t.describe ? t.describe(a) : tool });
+      if (decision === 'deny') return fail('refusé par Mikha');
+      if (decision === 'auto') addAutonomy();
+      how = ' (validé)';
+    }
+  }
   try {
-    const result = await t.run(args);
-    log('VPS → ' + tool + ' : OK', 'ok');
+    const result = await t.run(a);
+    log(who + ' → ' + tool + how + ' : OK', t.level === 'read' ? 'ok' : 'auto');
     bridge.reply(id, true, result);
   } catch (e) {
     fail(e && e.message ? e.message : String(e));
   }
 }
 
+// ---------- Pont VPS ----------
 function sendState() {
   bridge.send({
     type: 'state',
@@ -223,82 +441,100 @@ function sendState() {
 
 function loadSettings() {
   try {
-    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    const s = JSON.parse(store.get(SETTINGS_KEY) || '{}');
     return { url: typeof s.url === 'string' && s.url ? s.url : DEFAULT_VPS_URL, token: typeof s.token === 'string' ? s.token : '' };
   } catch {
     return { url: DEFAULT_VPS_URL, token: '' };
   }
 }
 
-function saveSettings(s) {
-  // Le jeton reste dans ce navigateur, sur ce téléphone.
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); return true; } catch { return false; }
-}
-
 bridge.addEventListener('status', (e) => {
   const st = e.detail;
   if (st === 'online') { log('VPS connecté.', 'ok'); sendState(); }
-  else if (st === 'refused') log('VPS : jeton refusé. Vérifie le jeton dans « Serveur VPS ».', 'err');
+  else if (st === 'refused') log('VPS : jeton refusé. Vérifie-le dans Réglages.', 'err');
   else if (st === 'replaced') log('VPS : un autre appareil s\'est connecté avec ce jeton.', 'err');
+  if (st !== 'online') {
+    cancelAllConfirms();
+    if (chat.live) {
+      pushChat(chat.live.model, 'error', 'connexion au VPS perdue : la réponse arrivera à la reconnexion');
+      chat.live = null;
+      renderChat();
+    }
+  }
   render();
 });
 bridge.addEventListener('call', (e) => { handleCall(e.detail); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bridge.wake(); });
 
 $('vpsSave').addEventListener('click', () => {
   const url = $('vpsUrl').value.trim() || DEFAULT_VPS_URL;
   const token = $('vpsToken').value.trim();
-  if (!/^wss:\/\//.test(url)) { log('L\'adresse du VPS doit commencer par wss://', 'err'); return; }
-  if (!saveSettings({ url, token })) log('Réglages non mémorisés (stockage indisponible) : valables jusqu\'à la fermeture.', 'err');
+  if (!/^wss:\/\//.test(url)) { log('L\'adresse du VPS doit commencer par wss://', 'err'); announce('Adresse invalide'); return; }
+  if (!store.set(SETTINGS_KEY, JSON.stringify({ url, token }))) log('Réglages non mémorisés (stockage indisponible).', 'err');
   bridge.configure(url, token);
   log(token ? 'Réglages VPS enregistrés.' : 'Jeton vide : pont VPS désactivé.');
+  announce(token ? 'Réglages enregistrés' : 'Pont VPS désactivé');
 });
 
-{
-  const s = loadSettings();
-  $('vpsUrl').value = s.url;
-  $('vpsToken').value = s.token;
-  bridge.configure(s.url, s.token);
-}
+$('vpsShow').addEventListener('click', () => {
+  const input = $('vpsToken');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  $('vpsShow').textContent = show ? 'Cacher' : 'Voir';
+  $('vpsShow').setAttribute('aria-pressed', String(show));
+});
 
 // ---------- Chat ----------
-const CHAT_MODEL_KEY = 'flipper-chat-model';
-const chat = { models: [], histories: {}, current: null, live: null }; // live : {id, model} pendant une réponse
+const chat = { models: [], histories: {}, current: null, live: null };
+let chatUnread = 0;
+
+function renderBadge() {
+  const b = $('chatBadge');
+  b.hidden = !chatUnread;
+  b.textContent = chatUnread > 9 ? '9+' : String(chatUnread);
+}
 
 function chatControls() {
   const online = bridge.status === 'online';
   $('chatSend').disabled = !online || !!chat.live || !chat.current;
   $('chatReset').disabled = !online || !!chat.live || !chat.current;
-  $('chatModel').disabled = !!chat.live;
+  for (const r of document.querySelectorAll('#chatModels input')) r.disabled = !!chat.live;
   $('chatText').placeholder = online ? 'Demande au modèle…' : 'VPS non connecté';
+}
+
+function scrollChat() {
+  const last = $('chatLog').lastElementChild;
+  if (last) last.scrollIntoView({ block: 'end' });
 }
 
 function renderChat() {
   const box = $('chatLog');
   box.textContent = '';
   const items = chat.histories[chat.current] || [];
-  if (!items.length && !(chat.live && chat.live.model === chat.current)) {
+  const live = chat.live && chat.live.model === chat.current;
+  if (!items.length && !live) {
     const p = document.createElement('p');
     p.className = 'chat-empty';
-    p.textContent = chat.models.length ? 'Aucun message.' : 'Connecte le VPS pour discuter avec les modèles.';
+    p.textContent = chat.models.length
+      ? 'Demande quelque chose au modèle. Il peut vérifier le Flipper et appuyer sur ses boutons, avec ta validation.'
+      : 'Connecte le VPS (Réglages) pour discuter avec les modèles.';
     box.appendChild(p);
   }
   for (const it of items) {
     const d = document.createElement('div');
-    d.className = 'msg ' + (['user', 'assistant', 'tool', 'error'].includes(it.role) ? it.role : 'assistant');
-    d.textContent = it.role === 'tool' ? 'outil : ' + it.text : it.text;
+    const role = ['user', 'assistant', 'tool', 'error'].includes(it.role) ? it.role : 'assistant';
+    d.className = 'msg ' + role;
+    d.textContent = role === 'tool' ? 'outil · ' + it.text : it.text;
     box.appendChild(d);
   }
-  if (chat.live && chat.live.model === chat.current) {
-    const last = items[items.length - 1];
-    if (!last || last.role !== 'assistant') {
-      const w = document.createElement('div');
-      w.className = 'msg wait';
-      w.textContent = 'réflexion…';
-      box.appendChild(w);
-    }
+  if (live && (!items.length || items[items.length - 1].role !== 'assistant')) {
+    const w = document.createElement('div');
+    w.className = 'typing';
+    w.setAttribute('role', 'img');
+    w.setAttribute('aria-label', 'Le modèle réfléchit');
+    w.innerHTML = '<i></i><i></i><i></i>';
+    box.appendChild(w);
   }
-  box.scrollTop = box.scrollHeight;
+  if (currentTab === 'chat') scrollChat();
   chatControls();
 }
 
@@ -313,54 +549,60 @@ function pushChat(model, role, text) {
 
 function setModels(models) {
   chat.models = Array.isArray(models) ? models : [];
-  const sel = $('chatModel');
-  sel.textContent = '';
-  for (const m of chat.models) {
-    const o = document.createElement('option');
-    o.value = m.id;
-    o.textContent = m.label;
-    sel.appendChild(o);
-  }
-  let saved = null;
-  try { saved = localStorage.getItem(CHAT_MODEL_KEY); } catch { /* stockage indisponible */ }
+  const box = $('chatModels');
+  box.textContent = '';
+  const saved = store.get(CHAT_MODEL_KEY);
   chat.current = chat.models.some((m) => m.id === saved) ? saved : (chat.models[0] ? chat.models[0].id : null);
-  if (chat.current) sel.value = chat.current;
+  for (const m of chat.models) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'chatModel';
+    input.value = m.id;
+    input.checked = m.id === chat.current;
+    input.addEventListener('change', () => {
+      chat.current = m.id;
+      store.set(CHAT_MODEL_KEY, m.id);
+      renderChat();
+    });
+    const span = document.createElement('span');
+    span.textContent = m.label;
+    label.append(input, span);
+    box.appendChild(label);
+  }
   renderChat();
 }
 
 bridge.addEventListener('message', (e) => {
   const m = e.detail;
   if (m.type === 'welcome') {
+    serverCommit = m.commit || null;
     setModels(m.models);
+    render();
   } else if (m.type === 'chat_history') {
-    if (chat.live && chat.live.model === m.model) return; // une réponse est en cours : on garde l'affichage local
+    if (chat.live && chat.live.model === m.model) return; // réponse en cours : on garde l'affichage local
     chat.histories[m.model] = (m.items || []).map((it) => ({ role: it.role, text: it.text }));
     if (m.model === chat.current) renderChat();
   } else if (m.type === 'chat_event') {
     if (m.event === 'text') pushChat(m.model, 'assistant', m.text || '');
     else if (m.event === 'tool') {
       pushChat(m.model, 'tool', m.tool + ' ' + JSON.stringify(m.args || {}));
-      log('Chat ' + m.model + ' → outil ' + m.tool);
+      log((ORIGINS[m.model] || m.model) + ' utilise ' + m.tool);
     } else if (m.event === 'error') {
       pushChat(m.model, 'error', m.error || 'erreur');
-      if (chat.live && chat.live.id === m.id) chat.live = null;
-    } else if (m.event === 'done') {
-      if (chat.live && chat.live.id === m.id) chat.live = null;
     }
-    const h = chat.histories[m.model];
-    if (h && (m.event === 'done' || m.event === 'error')) for (const it of h) it.live = false;
+    if (m.event === 'done' || m.event === 'error') {
+      if (chat.live && chat.live.id === m.id) chat.live = null;
+      for (const it of chat.histories[m.model] || []) it.live = false;
+      announce(m.event === 'done' ? 'Réponse de ' + (ORIGINS[m.model] || m.model) + ' reçue' : 'Erreur du modèle');
+      if (currentTab !== 'chat') { chatUnread++; renderBadge(); }
+    }
     if (m.model === chat.current) renderChat();
     else chatControls();
   }
 });
 
-$('chatModel').addEventListener('change', () => {
-  chat.current = $('chatModel').value;
-  try { localStorage.setItem(CHAT_MODEL_KEY, chat.current); } catch { /* stockage indisponible */ }
-  renderChat();
-});
-
-$('chatSend').addEventListener('click', () => {
+function sendChat() {
   const text = $('chatText').value.trim();
   if (!text || !chat.current || chat.live) return;
   const id = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -372,35 +614,54 @@ $('chatSend').addEventListener('click', () => {
   for (const it of chat.histories[chat.current] || []) it.live = false;
   pushChat(chat.current, 'user', text);
   $('chatText').value = '';
+  autoGrow();
   renderChat();
-});
+}
 
+function autoGrow() {
+  const t = $('chatText');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 160) + 'px';
+}
+
+$('chatSend').addEventListener('click', sendChat);
+$('chatText').addEventListener('input', autoGrow);
+$('chatText').addEventListener('keydown', (e) => {
+  // Entrée envoie sur un clavier physique ; sur iPhone, le bouton envoie et Entrée fait un retour à la ligne.
+  if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendChat(); }
+});
 $('chatReset').addEventListener('click', () => {
-  if (chat.current && !chat.live) bridge.send({ type: 'chat_reset', model: chat.current });
-});
-
-bridge.addEventListener('status', () => {
-  if (bridge.status !== 'online' && chat.live) {
-    // La réponse continue côté VPS ; on la retrouvera dans l'historique à la reconnexion.
-    pushChat(chat.live.model, 'error', 'connexion au VPS perdue : la réponse arrivera à la reconnexion');
-    chat.live = null;
-    renderChat();
+  if (chat.current && !chat.live && confirm('Effacer la conversation avec ' + (ORIGINS[chat.current] || chat.current) + ' ?')) {
+    bridge.send({ type: 'chat_reset', model: chat.current });
   }
-  chatControls();
 });
-renderChat();
 
-// ---------- Divers ----------
+// ---------- Journal ----------
 $('copy').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(logEl.innerText);
     log('Journal copié.', 'ok');
+    announce('Journal copié');
   } catch (e) {
     log('Copie impossible : ' + e.message, 'err');
   }
 });
+$('clearLog').addEventListener('click', () => { logEl.textContent = ''; announce('Journal effacé'); });
 
+// ---------- Démarrage ----------
 paint(() => false);
+selectTab(store.get(TAB_KEY) || 'pad');
+renderAuto();
+{
+  const s = loadSettings();
+  $('vpsUrl').value = s.url;
+  $('vpsToken').value = s.token;
+  bridge.configure(s.url, s.token);
+}
+renderChat();
 render();
 log(navigator.bluetooth ? 'Web Bluetooth disponible.' : 'Web Bluetooth absent : ouvre la page dans Bluefy.',
   navigator.bluetooth ? 'ok' : 'err');
+
+// Accès de test (?debug) : permet de simuler un Flipper dans un navigateur sans Bluetooth.
+if (new URLSearchParams(location.search).has('debug')) window.__flipperApp = { flipper, bridge, render };

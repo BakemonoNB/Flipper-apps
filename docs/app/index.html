@@ -4,121 +4,315 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0c0c0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f2f5" media="(prefers-color-scheme: light)">
 <title>Flipper Pont</title>
 <style>
   :root {
-    --bg: #f5f5f3; --fg: #17171a; --muted: #6a6a72; --card: #ffffff; --border: #d8d8dd;
-    --accent: #ff8200; --bezel: #2b2b30; --ok: #1d8a3a; --err: #c62828;
+    --bg: #f2f2f5; --surface: #ffffff; --surface-2: #f6f6f9; --fg: #121214; --muted: #565661;
+    --border: #e1e1e8; --accent: #ff8200; --accent-ink: #1a0e00; --accent-soft: #fff0df;
+    --ok: #137531; --err: #b8232b; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+    --bezel: #1b1b20; --tabbar-h: 64px; --radius: 18px; --focus: #0a64d6;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #111114; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --border: #2f2f36; --bezel: #000; --ok: #4cc36a; --err: #ff6b6b; }
+    :root {
+      --bg: #0c0c0f; --surface: #17171c; --surface-2: #202028; --fg: #f2f2f5; --muted: #a3a3ae;
+      --border: #2b2b34; --accent-soft: #2a1a08; --ok: #4fd07a; --err: #ff7a7a;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); --bezel: #000; --focus: #6aa8ff;
+    }
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html { font: -apple-system-body; }
   body {
-    margin: 0 auto; max-width: 520px; background: var(--bg); color: var(--fg);
-    font: 16px/1.45 -apple-system, system-ui, sans-serif;
-    padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; line-height: 1.4;
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px);
   }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .statuses { flex: 1; min-width: 0; }
-  .status { color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .status.small { font-size: 13px; font-weight: 500; }
-  .status.on { color: var(--ok); }
-  .status.bad { color: var(--err); }
-  details + details { margin-top: 10px; }
-  label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 4px; }
-  input { width: 100%; font: 16px/1.3 ui-monospace, Menlo, monospace; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
-  #vpsSave { margin-top: 12px; width: 100%; }
-  .chat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-bottom: 12px; }
-  .chat-head { display: flex; gap: 8px; align-items: center; }
-  .chat-head select { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
-  .chat-head button { padding: 8px 10px; font-size: 14px; }
-  .chat-log { max-height: 50vh; min-height: 80px; overflow-y: auto; margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
-  .msg { padding: 8px 10px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; max-width: 88%; font-size: 15px; }
-  .msg.user { align-self: flex-end; background: var(--accent); color: #111; }
-  .msg.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
-  .msg.tool { align-self: flex-start; color: var(--muted); font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 2px 4px; }
-  .msg.error { align-self: flex-start; color: var(--err); font-size: 14px; }
-  .msg.wait { align-self: flex-start; color: var(--muted); font-style: italic; }
-  .chat-empty { color: var(--muted); font-size: 14px; text-align: center; margin: 16px 0; }
-  .chat-input { display: flex; gap: 8px; align-items: flex-end; }
-  .chat-input textarea { flex: 1; min-width: 0; font: 16px/1.4 -apple-system, system-ui, sans-serif; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; resize: none; }
-  button { font: inherit; color: inherit; border-radius: 12px; border: 1px solid var(--border); background: var(--card); padding: 10px 16px; }
-  button:disabled { opacity: .4; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
-  button.link { border: 0; background: none; color: var(--muted); text-decoration: underline; padding: 8px 0; }
-  .screen-wrap { background: var(--bezel); border-radius: 14px; padding: 10px; }
-  canvas { display: block; width: 100%; aspect-ratio: 2 / 1; image-rendering: pixelated; border-radius: 6px; background: var(--accent); }
-  body:not(.connected) canvas { opacity: .45; }
-  .meta { color: #8a8a92; font-size: 12px; text-align: right; min-height: 16px; margin-top: 4px; }
-  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 300px; margin: 20px auto 8px; }
-  .pad button {
-    height: 64px; display: grid; place-items: center; padding: 0; font-weight: 700;
-    touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  .app { max-width: 560px; margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) 16px 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  h1, h2, h3 { margin: 0; }
+
+  /* Boutons */
+  .btn { font: inherit; font-weight: 600; min-height: 44px; padding: 10px 16px; border-radius: 14px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--fg); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn.small { min-height: 36px; padding: 6px 12px; font-size: .9em; border-radius: 12px; }
+  .btn svg { width: 20px; height: 20px; flex: none; }
+
+  /* Barre du haut */
+  .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .topbar .grow { flex: 1; min-width: 0; }
+  .topbar h1 { font-size: 1.25em; font-weight: 800; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .logo { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; }
+  .logo svg { width: 16px; height: 16px; }
+  .chips { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: .78em; font-weight: 600; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px; max-width: 100%; }
+  .chip .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #8a8a96; flex: none; }
+  .chip.on { color: var(--fg); } .chip.on .dot { background: var(--ok); }
+  .chip.bad .dot { background: var(--err); } .chip.bad { color: var(--err); }
+  .chip.wait .dot { background: var(--accent); }
+
+  /* Écran */
+  .screen-card { background: var(--bezel); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); position: relative; }
+  canvas { display: block; width: 100%; aspect-ratio: 2 / 1; image-rendering: pixelated; border-radius: 8px;
+    background: #ff8b1a; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); transition: opacity .2s; }
+  body:not(.connected) canvas { opacity: .35; }
+  .screen-meta { display: flex; justify-content: space-between; color: #9c9ca8; font-size: .72em; margin-top: 6px; min-height: 1.2em; }
+  .screen-empty { position: absolute; inset: 12px 12px 30px; display: grid; place-items: center; color: #f5d6b4; font-weight: 600; font-size: .9em; text-align: center; pointer-events: none; }
+  body.connected .screen-empty { display: none; }
+
+  /* Autonomie */
+  .auto { margin: 12px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 10px 10px 14px; box-shadow: var(--shadow); }
+  .auto .txt { flex: 1 1 150px; min-width: 0; }
+  .auto .btns { display: flex; gap: 8px; }
+  .auto .title { font-weight: 700; font-size: .95em; display: flex; align-items: center; gap: 6px; }
+  .auto .sub { color: var(--muted); font-size: .8em; }
+  .auto.on { background: linear-gradient(135deg, #ff8200, #ff4d2e); border-color: transparent; color: #1a0700; }
+  .auto.on .sub { color: #3a1500; }
+  .auto.on .btn { background: rgba(255,255,255,.35); border-color: transparent; color: #1a0700; }
+  .auto .time { font-variant-numeric: tabular-nums; }
+
+  /* Panneaux */
+  .panel { animation: fade .18s ease-out; }
+  .panel-title { font-size: 1.05em; font-weight: 700; margin: 4px 0 10px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+  .card + .card { margin-top: 12px; }
+  .muted { color: var(--muted); }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* Manette */
+  .pad-wrap { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; padding: 6px 4px 0; }
+  .dpad { width: min(76vw, 250px, 40vh); aspect-ratio: 1; border-radius: 50%; margin: 0 auto; position: relative;
+    background: radial-gradient(circle at 50% 40%, var(--surface), var(--surface-2)); border: 1px solid var(--border); box-shadow: var(--shadow);
+    display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); padding: 6%; }
+  .key { font: inherit; font-weight: 800; color: var(--fg); background: transparent; border: 0; border-radius: 16px; display: grid; place-items: center;
+    min-width: 44px; min-height: 44px; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; cursor: pointer;
+    transition: background .08s, transform .08s; }
+  .key svg { width: 28px; height: 28px; fill: currentColor; }
+  .key.ok { border-radius: 50%; background: var(--accent); color: var(--accent-ink); margin: 8%; box-shadow: 0 4px 14px rgba(255,130,0,.35); }
+  .key.up { grid-area: 1 / 2; } .key.left { grid-area: 2 / 1; } .key.ok { grid-area: 2 / 2; } .key.right { grid-area: 2 / 3; } .key.down { grid-area: 3 / 2; }
+  .key.active { background: var(--accent-soft); transform: scale(.94); }
+  .key.ok.active { filter: brightness(.9); }
+  .key:disabled { opacity: .35; cursor: default; }
+  .key.back { width: 64px; height: 64px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); margin-bottom: 8px; }
+  .hint { color: var(--muted); font-size: .8em; text-align: center; margin: 14px 0 0; }
+
+  /* Chat */
+  .segmented { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 3px; gap: 3px; }
+  .segmented label { flex: 1; position: relative; }
+  .segmented input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .segmented span { display: flex; align-items: center; justify-content: center; min-height: 40px; border-radius: 11px; font-weight: 600; font-size: .9em; color: var(--muted); text-align: center; padding: 0 6px; }
+  .segmented input:checked + span { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .segmented input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .segmented input:disabled + span { opacity: .5; }
+  .chat-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .chat-head .segmented { flex: 1; }
+  .chat-log { display: flex; flex-direction: column; gap: 8px; min-height: 120px; padding: 4px 0 8px; }
+  .msg { padding: 10px 13px; border-radius: 18px; white-space: pre-wrap; word-break: break-word; max-width: 86%; font-size: .97em; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 6px; }
+  .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
+  .msg.tool { align-self: flex-start; color: var(--muted); font: .78em/1.35 ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 10px; padding: 4px 9px; }
+  .msg.error { align-self: flex-start; color: var(--err); font-size: .9em; background: transparent; padding: 2px 4px; }
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+  .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite ease-in-out; }
+  .typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .chat-empty { color: var(--muted); font-size: .9em; text-align: center; margin: 22px 8px; }
+  .composer { position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px); display: flex; gap: 8px; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 6px 6px 6px 14px; box-shadow: var(--shadow); }
+  .composer textarea { flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent; border: 0; resize: none; padding: 9px 0; max-height: 9em; outline: none; }
+  .composer .send { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+
+  /* Journal */
+  #log { white-space: pre-wrap; word-break: break-word; font: .78em/1.45 ui-monospace, Menlo, monospace; max-height: 55vh; overflow: auto; }
+  #log .ok { color: var(--ok); } #log .err { color: var(--err); } #log .auto { color: var(--accent); }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* Réglages */
+  label.field { display: block; font-size: .85em; font-weight: 600; color: var(--muted); margin: 12px 0 6px; }
+  .input { width: 100%; font: 16px/1.3 ui-monospace, Menlo, monospace; color: inherit; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .input-row { display: flex; gap: 8px; }
+  .input-row .input { flex: 1; min-width: 0; }
+  dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: .9em; }
+  dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+
+  /* Barre d'onglets */
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; justify-content: center;
+    background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
+    border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
+  .tabbar .inner { display: flex; width: 100%; max-width: 560px; }
+  .tab { flex: 1; min-height: var(--tabbar-h); background: none; border: 0; color: var(--muted); font: inherit; font-size: .7em; font-weight: 600;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; position: relative; }
+  .tab svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .tab[aria-selected="true"] { color: var(--accent); }
+  .badge { position: absolute; top: 8px; left: calc(50% + 8px); min-width: 18px; height: 18px; border-radius: 9px; background: var(--err); color: #fff; font-size: 11px; display: grid; place-items: center; padding: 0 5px; }
+
+  /* Fenêtre de validation */
+  dialog.sheet { border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 560px; background: transparent; color: var(--fg); }
+  dialog.sheet::backdrop { background: rgba(0,0,0,.5); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+  dialog.sheet form { background: var(--surface); border-radius: 24px 24px 0 0; padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); box-shadow: 0 -10px 40px rgba(0,0,0,.3); }
+  dialog.sheet[open] form { animation: up .22s ease-out; }
+  @keyframes up { from { transform: translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .eyebrow { display: inline-block; font-size: .72em; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-ink); background: var(--accent); border-radius: 8px; padding: 3px 8px; }
+  .eyebrow.emit { background: var(--err); color: #fff; }
+  dialog h2 { font-size: 1.25em; margin: 10px 0 6px; }
+  .detail { font: .85em/1.4 ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 12px; padding: 10px 12px; margin: 10px 0; word-break: break-word; }
+  .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .sheet-actions .btn { min-height: 52px; font-size: 1.02em; }
+  .countdown { font-size: .8em; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
   }
-  .pad button svg { width: 22px; height: 22px; fill: currentColor; }
-  .pad button.center { border-radius: 50%; width: 64px; justify-self: center; }
-  .pad button.active { background: var(--accent); border-color: var(--accent); color: #111; }
-  .hint { color: var(--muted); font-size: 13px; text-align: center; margin: 0 0 16px; }
-  details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
-  summary { cursor: pointer; font-weight: 600; }
-  #log { max-height: 240px; overflow: auto; margin: 8px 0; white-space: pre-wrap; word-break: break-all; font: 12px/1.4 ui-monospace, Menlo, monospace; }
-  .ok { color: var(--ok); } .err { color: var(--err); }
 </style>
 </head>
 <body>
-<header>
-  <div class="statuses">
-    <div id="status" class="status">Flipper déconnecté</div>
-    <div id="vpsStatus" class="status small">VPS : non configuré</div>
+<div class="app">
+  <header class="topbar">
+    <div class="grow">
+      <h1><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="#1a0e00" d="M4 7a3 3 0 013-3h10a3 3 0 013 3v10a3 3 0 01-3 3H7a3 3 0 01-3-3zm4 2v6h8V9z"/></svg></span>Flipper</h1>
+      <div class="chips">
+        <span id="status" class="chip"><span class="dot" aria-hidden="true"></span><span class="t">Flipper hors ligne</span></span>
+        <span id="vpsStatus" class="chip"><span class="dot" aria-hidden="true"></span><span class="t">VPS non configuré</span></span>
+      </div>
+    </div>
+    <button id="main" class="btn primary">Connecter</button>
+  </header>
+
+  <section class="screen-card" aria-label="Écran du Flipper">
+    <canvas id="screen" width="128" height="64" role="img" aria-label="Écran du Flipper en direct"></canvas>
+    <div class="screen-empty" aria-hidden="true">Touche « Connecter » pour voir l'écran</div>
+    <div class="screen-meta"><span id="deviceName"></span><span id="fps"></span></div>
+  </section>
+
+  <section id="auto" class="auto" aria-labelledby="autoTitle">
+    <div class="txt">
+      <div class="title" id="autoTitle">Validation requise</div>
+      <div class="sub" id="autoSub">Chaque action te sera demandée</div>
+    </div>
+    <div class="btns">
+      <button id="autoMore" class="btn small">Autonome 15 min</button>
+      <button id="autoStop" class="btn small" hidden>Arrêter</button>
+    </div>
+  </section>
+
+  <main>
+    <section id="panel-pad" class="panel" role="tabpanel" aria-labelledby="tab-pad" tabindex="-1">
+      <div class="pad-wrap">
+        <div class="dpad" role="group" aria-label="Manette du Flipper">
+          <button class="key up" data-key="UP" aria-label="Haut"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7l7 9H5z"/></svg></button>
+          <button class="key left" data-key="LEFT" aria-label="Gauche"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12l9-7v14z"/></svg></button>
+          <button class="key ok" data-key="OK" aria-label="OK">OK</button>
+          <button class="key right" data-key="RIGHT" aria-label="Droite"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 12l-9 7V5z"/></svg></button>
+          <button class="key down" data-key="DOWN" aria-label="Bas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17L5 8h14z"/></svg></button>
+        </div>
+        <button class="key back" data-key="BACK" aria-label="Retour"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5L3 11l7 6v-4h5a4 4 0 010 8h-3v2h3a6 6 0 000-12h-5z"/></svg></button>
+      </div>
+      <p class="hint">Tap : appui court · Garder 0,5 s : appui long<br>Clavier : flèches, Entrée, Retour arrière</p>
+    </section>
+
+    <section id="panel-chat" class="panel" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1" hidden>
+      <div class="chat-head">
+        <div id="chatModels" class="segmented" role="radiogroup" aria-label="Modèle"></div>
+        <button id="chatReset" class="btn small" aria-label="Nouvelle conversation" title="Nouvelle conversation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div id="chatLog" class="chat-log"></div>
+      <div class="composer">
+        <label for="chatText" class="sr-only">Message au modèle</label>
+        <textarea id="chatText" rows="1" placeholder="Demande au modèle…" autocapitalize="sentences"></textarea>
+        <button id="chatSend" class="btn primary send" aria-label="Envoyer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section id="panel-log" class="panel" role="tabpanel" aria-labelledby="tab-log" tabindex="-1" hidden>
+      <div class="card">
+        <h2 class="panel-title">Journal</h2>
+        <div id="log"></div>
+        <div class="row">
+          <button id="copy" class="btn small">Copier</button>
+          <button id="clearLog" class="btn small ghost">Effacer</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-settings" class="panel" role="tabpanel" aria-labelledby="tab-settings" tabindex="-1" hidden>
+      <div class="card">
+        <h2 class="panel-title">Serveur VPS</h2>
+        <label class="field" for="vpsUrl">Adresse</label>
+        <input id="vpsUrl" class="input" type="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <label class="field" for="vpsToken">Jeton du téléphone</label>
+        <div class="input-row">
+          <input id="vpsToken" class="input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button id="vpsShow" class="btn small" aria-pressed="false">Voir</button>
+        </div>
+        <div class="row"><button id="vpsSave" class="btn primary">Enregistrer et connecter</button></div>
+        <p class="muted" style="font-size:.8em;margin:10px 0 0">Le jeton reste sur ce téléphone. Ne le colle jamais dans un chat.</p>
+      </div>
+      <div class="card">
+        <h2 class="panel-title">Flipper</h2>
+        <p class="muted" style="margin:0 0 10px;font-size:.9em">Le Flipper n'apparaît pas ? Ferme l'app Flipper officielle, puis :</p>
+        <button id="other" class="btn">Choisir dans la liste complète</button>
+      </div>
+      <div class="card">
+        <h2 class="panel-title">Mode autonome</h2>
+        <p class="muted" style="margin:0;font-size:.9em">Chaque appui ajoute 15 min, 2 h au maximum. Pendant ce temps, les modèles agissent sans te demander. Il s'arrête tout seul, et dès que tu recharges la page.</p>
+      </div>
+      <div class="card">
+        <h2 class="panel-title">À propos</h2>
+        <dl class="kv"><dt>Serveur</dt><dd id="aboutServer">—</dd><dt>Firmware visé</dt><dd>officiel 1.5.1</dd></dl>
+      </div>
+    </section>
+  </main>
+</div>
+
+<nav class="tabbar" aria-label="Sections">
+  <div class="inner" role="tablist">
+    <button class="tab" role="tab" id="tab-pad" aria-controls="panel-pad" data-tab="pad">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="11" rx="5.5"/><path d="M7.5 10v4M5.5 12h4"/><circle cx="15.5" cy="11" r=".6" fill="currentColor"/><circle cx="17.5" cy="13" r=".6" fill="currentColor"/></svg>
+      Manette
+    </button>
+    <button class="tab" role="tab" id="tab-chat" aria-controls="panel-chat" data-tab="chat">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 01-11.6 7.1L4 20l1-4.1A8 8 0 1120 12z"/></svg>
+      Chat<span id="chatBadge" class="badge" hidden></span>
+    </button>
+    <button class="tab" role="tab" id="tab-log" aria-controls="panel-log" data-tab="log">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>
+      Journal
+    </button>
+    <button class="tab" role="tab" id="tab-settings" aria-controls="panel-settings" data-tab="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      Réglages
+    </button>
   </div>
-  <button id="main" class="primary">Connecter</button>
-</header>
+</nav>
 
-<section class="screen-wrap">
-  <canvas id="screen" width="128" height="64" aria-label="Écran du Flipper"></canvas>
-  <div id="fps" class="meta"></div>
-</section>
+<dialog id="confirm" class="sheet" aria-labelledby="cTitle" aria-describedby="cDesc">
+  <form method="dialog">
+    <span id="cLevel" class="eyebrow">Action</span>
+    <h2 id="cTitle">Autoriser ?</h2>
+    <p id="cDesc" class="muted" style="margin:0"></p>
+    <div id="cDetail" class="detail"></div>
+    <p id="cCount" class="countdown"></p>
+    <div class="sheet-actions">
+      <button value="deny" class="btn" autofocus>Refuser</button>
+      <button value="allow" class="btn primary">Autoriser</button>
+    </div>
+    <div class="row" style="justify-content:center"><button value="auto" class="btn ghost">Autoriser et passer en autonome 15 min</button></div>
+  </form>
+</dialog>
 
-<section class="pad" aria-label="Boutons du Flipper">
-  <span></span>
-  <button data-key="UP" aria-label="Haut"><svg viewBox="0 0 24 24"><path d="M12 6l8 10H4z"/></svg></button>
-  <span></span>
-  <button data-key="LEFT" aria-label="Gauche"><svg viewBox="0 0 24 24"><path d="M6 12l10-8v16z"/></svg></button>
-  <button data-key="OK" class="center" aria-label="OK">OK</button>
-  <button data-key="RIGHT" aria-label="Droite"><svg viewBox="0 0 24 24"><path d="M18 12L8 20V4z"/></svg></button>
-  <span></span>
-  <button data-key="DOWN" aria-label="Bas"><svg viewBox="0 0 24 24"><path d="M12 18L4 8h16z"/></svg></button>
-  <button data-key="BACK" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M10 5L3 11l7 6v-4h5a4 4 0 010 8h-3v2h3a6 6 0 000-12h-5z"/></svg></button>
-</section>
-<p class="hint">Tap = appui court · garder 0,5 s = appui long</p>
-
-<section class="chat" aria-label="Chat avec les modèles du VPS">
-  <div class="chat-head">
-    <select id="chatModel" aria-label="Modèle"></select>
-    <button id="chatReset">Nouvelle conv.</button>
-  </div>
-  <div id="chatLog" class="chat-log" aria-live="polite"></div>
-  <div class="chat-input">
-    <textarea id="chatText" rows="2" placeholder="Demande au modèle…" autocapitalize="sentences"></textarea>
-    <button id="chatSend" class="primary">Envoyer</button>
-  </div>
-</section>
-
-<details>
-  <summary>Journal</summary>
-  <div id="log"></div>
-  <button id="copy">Copier le journal</button>
-</details>
-<details>
-  <summary>Serveur VPS</summary>
-  <label for="vpsUrl">Adresse</label>
-  <input id="vpsUrl" type="url" autocomplete="off" autocapitalize="off" spellcheck="false">
-  <label for="vpsToken">Jeton du téléphone</label>
-  <input id="vpsToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
-  <button id="vpsSave">Enregistrer et connecter</button>
-</details>
-<button id="other" class="link">Choisir dans la liste complète des appareils</button>
+<div id="announce" class="sr-only" aria-live="polite"></div>
 
 <script type="module" src="app.js"></script>
 </body>

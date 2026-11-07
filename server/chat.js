@@ -89,7 +89,7 @@ export function createChat({ models, systemPrompt, stateDir, mcpConfigPath, clau
         try {
           await runOllama({
             url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, systemPrompt, messages: c.ollamaMessages, text,
-            tools: ollamaTools(), callTool, onEvent,
+            tools: ollamaTools(), callTool: (name, args) => callTool(name, args, model), onEvent,
           });
         } catch (e) {
           c.ollamaMessages.length = before; // on oublie le tour raté plutôt que de garder un contexte incohérent
