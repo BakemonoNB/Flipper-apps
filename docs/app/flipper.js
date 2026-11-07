@@ -19,7 +19,19 @@ export const F = {
   guiStopScreenStream: 21,
   guiScreenFrame: 22,
   guiSendInput: 23,
+  storageList: 7, storageListResponse: 8,
+  storageRead: 9, storageReadResponse: 10,
+  storageWrite: 11,
+  storageDelete: 12,
+  storageMkdir: 13,
+  storageStat: 24, storageStatResponse: 25,
+  appStart: 16,
+  appGetError: 63, appGetErrorResponse: 64,
 };
+
+// Taille des données par message d'écriture de fichier (comme qFlipper).
+const FILE_CHUNK = 512;
+const utf8 = (s) => new TextEncoder().encode(s);
 
 export const Key = { UP: 0, DOWN: 1, RIGHT: 2, LEFT: 3, OK: 4, BACK: 5 };
 export const InputType = { PRESS: 0, RELEASE: 1, SHORT: 2, LONG: 3, REPEAT: 4 };
@@ -108,9 +120,33 @@ export const getField = (fields, n) => fields.find((f) => f.field === n);
 const getValue = (fields, n) => { const f = getField(fields, n); return f ? f.value : 0; };
 
 // Requête PB.Main complète, préfixée par sa longueur.
-export function encodeRequest(id, field, body = new Uint8Array(0)) {
-  const main = concat(fieldVarint(F.commandId, id), fieldBytes(field, body));
+export function encodeRequest(id, field, body = new Uint8Array(0), hasNext = false) {
+  const main = concat(fieldVarint(F.commandId, id), fieldVarint(F.hasNext, hasNext ? 1 : 0), fieldBytes(field, body));
   return concat(varint(main.length), main);
+}
+
+// PB_Storage.File : type=1 (0 fichier, 1 dossier), name=2, size=3, data=4.
+export function decodeFile(bytes) {
+  const f = decodeFields(bytes);
+  const name = getField(f, 2);
+  const data = getField(f, 4);
+  return {
+    type: getValue(f, 1) === 1 ? 'dir' : 'file',
+    name: name ? new TextDecoder().decode(name.bytes) : '',
+    size: getValue(f, 3),
+    data: data ? data.bytes : new Uint8Array(0),
+  };
+}
+
+export const encodePath = (path) => fieldBytes(1, utf8(path));
+export function encodeWriteChunks(path, data) {
+  const chunks = [];
+  for (let o = 0; o === 0 || o < data.length; o += FILE_CHUNK) {
+    const part = data.subarray(o, o + FILE_CHUNK);
+    const file = part.length ? fieldBytes(4, part) : new Uint8Array(0);
+    chunks.push(concat(fieldBytes(1, utf8(path)), fieldBytes(2, file)));
+  }
+  return chunks;
 }
 
 // Écran 128x64, 1 bit par pixel, rangé par pages de 8 lignes (bit 0 = ligne du haut de la page).
@@ -135,6 +171,13 @@ export class Flipper extends EventTarget {
     super();
     this.device = null;
     this.rx = this.tx = this.flow = null;
+    this.flowFree = null;      // place libre annoncée par le Flipper (octets), null = inconnue
+    this.flowWaiters = [];
+    this._onFlow = (ev) => {
+      this.flowFree = ev.target.value.getUint32(0, false);
+      const w = this.flowWaiters; this.flowWaiters = [];
+      for (const r of w) r();
+    };
     this.buf = new Uint8Array(0);
     this.nextId = 1;
     this.pending = new Map();
@@ -179,6 +222,16 @@ export class Flipper extends EventTarget {
     this.buf = new Uint8Array(0);
     this.tx.addEventListener('characteristicvaluechanged', this._onValue);
     await this.tx.startNotifications(); // peut déclencher l'appairage (code affiché sur le Flipper)
+    this.flowFree = null;
+    if (this.flow) {
+      try {
+        this.flowFree = (await this.flow.readValue()).getUint32(0, false);
+        this.flow.addEventListener('characteristicvaluechanged', this._onFlow);
+        await this.flow.startNotifications();
+      } catch {
+        this.flowFree = null; // sans contrôle de débit : on écrit sans attendre
+      }
+    }
     this.dispatchEvent(new Event('connected'));
   }
 
@@ -197,11 +250,13 @@ export class Flipper extends EventTarget {
   }
 
   // Envoie une commande et attend la réponse complète (plusieurs messages si has_next).
+  // bodies : un tableau pour envoyer la commande en plusieurs messages (has_next sur tous sauf le dernier).
   request(field, body = new Uint8Array(0), { timeout = 5000 } = {}) {
     if (!this.connected) return Promise.reject(new Error('Flipper non connecté'));
     const id = this.nextId;
     this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
-    const frame = encodeRequest(id, field, body);
+    const bodies = Array.isArray(body) ? body : [body];
+    const frame = concat(...bodies.map((b, i) => encodeRequest(id, field, b, i < bodies.length - 1)));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -236,6 +291,79 @@ export class Flipper extends EventTarget {
     return this.request(F.guiSendInput, concat(fieldVarint(1, key), fieldVarint(2, type)));
   }
 
+  // ---------- Fichiers (carte SD) ----------
+
+  async list(path) {
+    const parts = await this.request(F.storageList, encodePath(path), { timeout: 15000 });
+    const out = [];
+    for (const p of parts) {
+      for (const f of p.filter((x) => x.field === F.storageListResponse)) {
+        for (const e of decodeFields(f.bytes).filter((x) => x.field === 1)) {
+          const file = decodeFile(e.bytes);
+          out.push({ name: file.name, type: file.type, size: file.size });
+        }
+      }
+    }
+    return out;
+  }
+
+  async stat(path) {
+    const parts = await this.request(F.storageStat, encodePath(path));
+    const r = getField(parts[0], F.storageStatResponse);
+    const file = r ? getField(decodeFields(r.bytes), 1) : null;
+    if (!file) return null;
+    const d = decodeFile(file.bytes);
+    return { type: d.type, size: d.size };
+  }
+
+  async read(path) {
+    const parts = await this.request(F.storageRead, encodePath(path), { timeout: 30000 });
+    const chunks = [];
+    for (const p of parts) {
+      const r = getField(p, F.storageReadResponse);
+      const file = r ? getField(decodeFields(r.bytes), 1) : null;
+      if (file) chunks.push(decodeFile(file.bytes).data);
+    }
+    return concat(...chunks);
+  }
+
+  write(path, data) {
+    return this.request(F.storageWrite, encodeWriteChunks(path, data), { timeout: 30000 + data.length * 5 });
+  }
+
+  delete(path, recursive = false) {
+    return this.request(F.storageDelete, concat(encodePath(path), fieldVarint(2, recursive ? 1 : 0)));
+  }
+
+  // Crée le dossier et ses parents (ignore « existe déjà »).
+  async mkdirs(path) {
+    const parts = path.split('/').filter(Boolean);
+    for (let i = 2; i <= parts.length; i++) {
+      const p = '/' + parts.slice(0, i).join('/');
+      try { await this.request(F.storageMkdir, encodePath(p)); }
+      catch (e) { if (!(e instanceof RpcError && e.status === 6)) throw e; }
+    }
+  }
+
+  // ---------- Apps ----------
+
+  async startApp(name, args = '') {
+    const body = concat(fieldBytes(1, utf8(name)), args ? fieldBytes(2, utf8(args)) : new Uint8Array(0));
+    try {
+      await this.request(F.appStart, body, { timeout: 10000 });
+    } catch (e) {
+      if (!(e instanceof RpcError)) throw e;
+      let detail = '';
+      try {
+        const parts = await this.request(F.appGetError);
+        const r = getField(parts[0], F.appGetErrorResponse);
+        const text = r ? getField(decodeFields(r.bytes), 2) : null;
+        if (text) detail = ' : ' + new TextDecoder().decode(text.bytes);
+      } catch { /* pas de détail */ }
+      throw new Error(e.message + detail);
+    }
+  }
+
   // ---------- interne ----------
 
   _write(bytes) {
@@ -245,13 +373,29 @@ export class Flipper extends EventTarget {
       for (let o = 0; o < bytes.length; o += WRITE_CHUNK) {
         if (!this.rx) throw new Error('Flipper déconnecté');
         const part = bytes.subarray(o, o + WRITE_CHUNK);
+        await this._waitFlow(part.length);
         if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
         else await this.rx.writeValue(part);
+        if (this.flowFree !== null) this.flowFree = Math.max(0, this.flowFree - part.length);
       }
     };
     const p = this.writeChain.then(run);
     this.writeChain = p.catch(() => {});
     return p;
+  }
+
+  // Attend que le tampon du Flipper ait la place d'accueillir n octets.
+  // Sécurité : si aucune notification n'arrive, on relit la valeur, puis on continue quand même.
+  async _waitFlow(n) {
+    for (let tries = 0; this.flowFree !== null && this.flowFree < n && tries < 3; tries++) {
+      const notified = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve(false), 2000);
+        this.flowWaiters.push(() => { clearTimeout(t); resolve(true); });
+      });
+      if (!notified && this.flow) {
+        try { this.flowFree = (await this.flow.readValue()).getUint32(0, false); } catch { /* on continue */ }
+      }
+    }
   }
 
   _onBytes(chunk) {
@@ -299,6 +443,10 @@ export class Flipper extends EventTarget {
 
   _onDisconnect() {
     if (this.tx) this.tx.removeEventListener('characteristicvaluechanged', this._onValue);
+    if (this.flow) this.flow.removeEventListener('characteristicvaluechanged', this._onFlow);
+    this.flowFree = null;
+    for (const r of this.flowWaiters) r();
+    this.flowWaiters = [];
     this.rx = this.tx = this.flow = null;
     for (const p of this.pending.values()) p.reject(new Error('Flipper déconnecté'));
     this.pending.clear();

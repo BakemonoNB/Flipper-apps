@@ -86,6 +86,7 @@ export const chat = createChat({
   },
   systemPrompt: readFileSync(new URL('./prompt.md', import.meta.url), 'utf8'),
   stateDir: STATE_DIR,
+  workDir: fileURLToPath(new URL('./workspace', import.meta.url)),
   mcpConfigPath,
   claudeBin: CLAUDE_BIN,
   ollamaUrl: OLLAMA_URL,

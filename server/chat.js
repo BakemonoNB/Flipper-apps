@@ -8,17 +8,17 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { runClaude } from './models/claude.js';
 import { runOllama } from './models/ollama.js';
-import { toolNames, ollamaTools } from './tools.js';
+import { toolNames, ollamaTools, shrinkArgs } from './tools.js';
+import { screenToText } from './screen.js';
 
 const MAX_TEXT = 4000;
 const MAX_HISTORY = 100;     // entrées affichées par modèle
 const MAX_OLLAMA_MSGS = 24;  // messages gardés dans le contexte de gpt-oss
 
-export function createChat({ models, systemPrompt, stateDir, mcpConfigPath, claudeBin, ollamaUrl, ollamaNumCtx,
+// workDir : dossier de travail de Claude (documentation lisible avec Read : CLAUDE.md, types du SDK JS).
+export function createChat({ models, systemPrompt, stateDir, workDir, mcpConfigPath, claudeBin, ollamaUrl, ollamaNumCtx,
   log, sendToPhone, callTool }) {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const workDir = join(stateDir, 'workspace');
-  mkdirSync(workDir, { recursive: true, mode: 0o700 });
   const file = join(stateDir, 'chat.json');
   let state = { conversations: {} };
   try { state = JSON.parse(readFileSync(file, 'utf8')); } catch { /* premier démarrage */ }
@@ -39,6 +39,17 @@ export function createChat({ models, systemPrompt, stateDir, mcpConfigPath, clau
     c.history.push({ role, text: String(text).slice(0, 8000), at: new Date().toISOString() });
     if (c.history.length > MAX_HISTORY) c.history.splice(0, c.history.length - MAX_HISTORY);
   };
+
+  // gpt-oss ne lit pas les images : l'écran lui est donné en texte réduit.
+  async function callForText(name, args, model) {
+    const r = await callTool(name, args, model);
+    if (r.ok && name === 'get_screen') {
+      try {
+        return { ok: true, result: { ecran: screenToText(r.result, 2), note: 'image réduite de moitié (# = allumé) : le petit texte peut être illisible ; pour un résultat précis, fais écrire le script dans un fichier puis lis-le' } };
+      } catch (e) { return { ok: false, error: e.message }; }
+    }
+    return r;
+  }
 
   function list() {
     return Object.entries(models).map(([id, m]) => ({ id, label: m.label }));
@@ -66,7 +77,8 @@ export function createChat({ models, systemPrompt, stateDir, mcpConfigPath, clau
       if (ev.event === 'text') answer += ev.text;
       if (ev.event === 'tool') {
         if (answer.trim()) { record(c, 'assistant', answer); answer = ''; }
-        record(c, 'tool', ev.tool + ' ' + JSON.stringify(ev.args || {}));
+        ev = { ...ev, args: shrinkArgs(ev.args) };
+        record(c, 'tool', ev.tool + ' ' + JSON.stringify(ev.args));
       }
       emit(ev);
     };
@@ -89,7 +101,7 @@ export function createChat({ models, systemPrompt, stateDir, mcpConfigPath, clau
         try {
           await runOllama({
             url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, systemPrompt, messages: c.ollamaMessages, text,
-            tools: ollamaTools(), callTool: (name, args) => callTool(name, args, model), onEvent,
+            tools: ollamaTools(), callTool: (name, args) => callForText(name, args, model), onEvent,
           });
         } catch (e) {
           c.ollamaMessages.length = before; // on oublie le tour raté plutôt que de garder un contexte incohérent

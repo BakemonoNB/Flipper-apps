@@ -3,6 +3,7 @@
 // Chaque appel passe par l'API du pont : FLIPPER_API_URL (http://127.0.0.1:3040) + API_TOKEN.
 import { createInterface } from 'node:readline';
 import { TOOLS } from './tools.js';
+import { screenToPng, screenToText } from './screen.js';
 
 const API = (process.env.FLIPPER_API_URL || 'http://127.0.0.1:3040').replace(/\/$/, '');
 const TOKEN = process.env.API_TOKEN || '';
@@ -42,6 +43,15 @@ async function handle(msg) {
       const name = params && params.name;
       if (!TOOLS.some((t) => t.name === name)) return fail(id, -32602, 'outil inconnu : ' + name);
       const r = await callTool(name, (params && params.arguments) || {});
+      if (r.ok && name === 'get_screen') {
+        // Claude lit les images : on renvoie l'écran agrandi 4 fois, plus une version texte de secours.
+        return reply(id, {
+          content: [
+            { type: 'image', data: screenToPng(r.result, 4).toString('base64'), mimeType: 'image/png' },
+            { type: 'text', text: 'Écran 128x64 (texte réduit de moitié, # = allumé) :\n' + screenToText(r.result, 2) },
+          ],
+        });
+      }
       return reply(id, {
         content: [{ type: 'text', text: JSON.stringify(r.ok ? r.result : { erreur: r.error }) }],
         isError: !r.ok,

@@ -1,5 +1,6 @@
 import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn } from './flipper.js';
 import { BridgeClient } from './bridge.js';
+import { normPath, isSensitive, checkWritable, checkScript, parentOf, MAX_READ_BYTES, MAX_WRITE_BYTES } from './policy.js';
 
 const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
@@ -94,7 +95,29 @@ function drawFrame(data, orientation) {
   }
   const flip = orientation === 1;
   paint((x, y) => flip ? pixelOn(data, SCREEN_W - 1 - x, SCREEN_H - 1 - y) : pixelOn(data, x, y));
+  lastFrame = { data: data.slice(0, SCREEN_W * SCREEN_H / 8), orientation, at: Date.now() };
   frames++;
+  for (const r of frameWaiters.splice(0)) r();
+}
+
+let lastFrame = null;
+const frameWaiters = [];
+// Image actuelle de l'écran (attend la première si le flux vient de démarrer).
+async function captureScreen() {
+  if (!lastFrame) {
+    await flipper.startScreen().catch(() => {});
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('aucune image reçue du Flipper')), 3000);
+      frameWaiters.push(() => { clearTimeout(t); resolve(); });
+    });
+  }
+  return lastFrame;
+}
+
+function toBase64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 setInterval(() => {
@@ -199,6 +222,7 @@ $('other').addEventListener('click', () => {
 
 flipper.addEventListener('screen', (e) => drawFrame(e.detail.data, e.detail.orientation));
 flipper.addEventListener('disconnected', () => {
+  lastFrame = null;
   log('Flipper déconnecté.', 'err');
   announce('Flipper déconnecté');
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
@@ -298,26 +322,24 @@ function stopAutonomy(reason) {
   renderAuto();
 }
 
+const BOLT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>';
 function renderAuto() {
   if (autoUntil && !autoActive()) { stopAutonomy('temps écoulé'); return; }
   const on = autoActive();
   const left = autoUntil - Date.now();
-  $('auto').classList.toggle('on', on);
-  $('autoTitle').textContent = on ? 'Mode autonome' : 'Validation requise';
-  $('autoSub').innerHTML = '';
-  if (on) {
-    const t = document.createElement('span');
-    t.className = 'time';
-    t.textContent = mmss(left);
-    $('autoSub').append('Les modèles agissent seuls · ', t);
-  } else {
-    $('autoSub').textContent = 'Chaque action te sera demandée';
-  }
   const atMax = on && left > AUTO_MAX_MS - 60000;
-  $('autoMore').textContent = on ? '+15 min' : 'Autonome 15 min';
-  $('autoMore').disabled = atMax;
-  $('autoMore').title = atMax ? 'Maximum : 2 h' : '';
+  const more = $('autoMore');
+  more.innerHTML = BOLT;
+  const label = document.createElement('span');
+  label.textContent = on ? mmss(left) + (atMax ? '' : ' · +15') : 'Auto';
+  more.appendChild(label);
+  more.classList.toggle('on', on);
+  more.disabled = atMax;
+  more.setAttribute('aria-label', on
+    ? 'Mode autonome actif, il reste ' + Math.ceil(left / 60000) + ' minutes' + (atMax ? ', maximum atteint' : '. Ajouter 15 minutes')
+    : 'Activer le mode autonome pendant 15 minutes');
   $('autoStop').hidden = !on;
+  document.querySelector('.screen-card').classList.toggle('autonomous', on);
 }
 
 $('autoMore').addEventListener('click', addAutonomy);
@@ -325,7 +347,11 @@ $('autoStop').addEventListener('click', () => stopAutonomy('arrêté par toi'));
 
 // ---------- Outils demandés par le VPS ----------
 // Le niveau est décidé ICI, jamais par le message du serveur.
-const LEVELS = { read: 'Lecture', write: 'Écriture', action: 'Action', emit: 'Émission' };
+const LEVELS = { read: 'Lecture', sensitive: 'Lecture sensible', write: 'Écriture', action: 'Action', run: 'Exécution', emit: 'Émission' };
+const RISKY = new Set(['run', 'emit']);
+const JS_RUNNERS = ['/ext/apps/System/js_app.fap', 'JS Runner', 'js_app'];
+let jsRunner = null;
+const preview = (s, n = 4000) => (s.length > n ? s.slice(0, n) + '\n… (' + (s.length - n) + ' caractères de plus)' : s);
 const KEY_NAMES = { up: ['Haut', Key.UP], down: ['Bas', Key.DOWN], left: ['Gauche', Key.LEFT], right: ['Droite', Key.RIGHT], ok: ['OK', Key.OK], back: ['Retour', Key.BACK] };
 const ORIGINS = { claude: 'Claude', 'gpt-oss': 'gpt-oss', api: 'Le VPS' };
 
@@ -350,6 +376,90 @@ const TOOLS = {
       return { pressed: a.key, long: !!a.long };
     },
   },
+  get_screen: {
+    level: 'read',
+    run: async () => {
+      const f = await captureScreen();
+      return { width: SCREEN_W, height: SCREEN_H, orientation: f.orientation, format: 'pages-8-lignes', data: toBase64(f.data) };
+    },
+  },
+  list_files: {
+    level: 'read',
+    check: (a) => { a.path = normPath(a.path); },
+    run: async (a) => {
+      const all = await flipper.list(a.path);
+      return { path: a.path, entries: all.slice(0, 300), truncated: all.length > 300 };
+    },
+  },
+  read_file: {
+    level: (a) => (isSensitive(a.path) ? 'sensitive' : 'read'),
+    check: (a) => { a.path = normPath(a.path); },
+    describe: (a) => 'lire ' + a.path,
+    run: async (a) => {
+      const st = await flipper.stat(a.path);
+      if (!st) throw new Error('fichier introuvable');
+      if (st.type !== 'file') throw new Error('c\'est un dossier : utilise list_files');
+      if (st.size > MAX_READ_BYTES) throw new Error('fichier trop gros (' + st.size + ' octets, max ' + MAX_READ_BYTES + ')');
+      const bytes = await flipper.read(a.path);
+      try {
+        return { path: a.path, size: bytes.length, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+      } catch {
+        return { path: a.path, size: bytes.length, base64: toBase64(bytes) };
+      }
+    },
+  },
+  write_file: {
+    level: 'write',
+    check: (a) => {
+      a.path = checkWritable(a.path);
+      if (typeof a.content !== 'string') throw new Error('content doit être du texte');
+      if (new TextEncoder().encode(a.content).length > MAX_WRITE_BYTES) throw new Error('contenu trop gros (max ' + MAX_WRITE_BYTES + ' octets)');
+    },
+    describe: (a) => 'écrire ' + a.path,
+    preview: async (a) => preview(a.content),
+    run: async (a) => {
+      const bytes = new TextEncoder().encode(a.content);
+      await flipper.mkdirs(parentOf(a.path));
+      await flipper.write(a.path, bytes);
+      return { path: a.path, size: bytes.length };
+    },
+  },
+  delete_file: {
+    level: 'write',
+    check: (a) => { a.path = checkWritable(a.path); },
+    describe: (a) => 'supprimer ' + a.path,
+    run: async (a) => { await flipper.delete(a.path, false); return { deleted: a.path }; },
+  },
+  run_script: {
+    level: 'run',
+    check: (a) => { a.path = checkScript(a.path); },
+    describe: (a) => 'lancer le script ' + a.path.split('/').pop(),
+    preview: async (a) => {
+      try { return preview(new TextDecoder().decode(await flipper.read(a.path))); }
+      catch (e) { return '(contenu illisible : ' + e.message + ')'; }
+    },
+    run: async (a) => {
+      const tried = [];
+      for (const name of jsRunner ? [jsRunner] : JS_RUNNERS) {
+        try {
+          await flipper.startApp(name, a.path);
+          jsRunner = name;
+          return { started: a.path, runner: name, hint: 'regarde l\'écran avec get_screen ; appui long sur back pour quitter' };
+        } catch (e) { tried.push(name + ' → ' + e.message); }
+      }
+      jsRunner = null;
+      throw new Error('impossible de lancer le script. Essais : ' + tried.join(' | '));
+    },
+  },
+  start_app: {
+    level: 'action',
+    check: (a) => {
+      if (typeof a.name !== 'string' || !a.name || a.name.length > 128) throw new Error('nom d\'app invalide');
+      if (a.args !== undefined && (typeof a.args !== 'string' || a.args.length > 255)) throw new Error('args invalides');
+    },
+    describe: (a) => 'ouvrir l\'app ' + a.name + (a.args ? ' avec ' + a.args : ''),
+    run: async (a) => { await flipper.startApp(a.name, a.args || ''); return { started: a.name }; },
+  },
 };
 
 // File de validations : une fenêtre à la fois.
@@ -370,12 +480,22 @@ function pumpConfirm() {
   const c = confirmQueue.shift();
   if (autoActive()) { c.resolve('allow'); pumpConfirm(); return; } // autonomie activée pendant l'attente
   confirmCurrent = c;
-  const emit = c.level === 'emit';
+  const risky = RISKY.has(c.level);
   $('cLevel').textContent = LEVELS[c.level] || c.level;
-  $('cLevel').className = 'eyebrow' + (emit ? ' emit' : '');
+  $('cLevel').className = 'eyebrow' + (risky ? ' emit' : '');
   $('cTitle').textContent = (ORIGINS[c.origin] || c.origin) + ' veut ' + c.summary;
-  $('cDesc').textContent = emit ? 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.' : 'Regarde l\'écran du Flipper si besoin.';
-  $('cDetail').textContent = c.tool + ' ' + JSON.stringify(c.args);
+  $('cDesc').textContent = {
+    run: 'Un script peut taper au clavier d\'un ordinateur branché en USB (Bad USB) ou piloter les broches GPIO. Lis le code.',
+    emit: 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.',
+    sensitive: 'Ce dossier peut contenir des copies de badges, de cartes ou de clés.',
+    write: 'Le fichier sera créé ou remplacé sur la carte SD.',
+  }[c.level] || 'Regarde l\'écran du Flipper si besoin.';
+  const args = { ...c.args };
+  if (typeof args.content === 'string') args.content = '(' + args.content.length + ' caractères, voir ci-dessous)';
+  $('cDetail').textContent = c.tool + ' ' + JSON.stringify(args);
+  $('cPreview').hidden = !c.preview;
+  $('cPreview').textContent = c.preview || '';
+  $('cPreview').scrollTop = 0;
   const end = Date.now() + CONFIRM_MS;
   const tick = () => {
     const left = end - Date.now();
@@ -406,17 +526,19 @@ function cancelAllConfirms() {
 async function handleCall({ id, tool, args, origin }) {
   const t = Object.hasOwn(TOOLS, tool) ? TOOLS[tool] : null;
   const who = ORIGINS[origin] || origin;
-  const fail = (msg) => { log(who + ' → ' + tool + ' refusé : ' + msg, 'err'); bridge.reply(id, false, msg); };
+  const fail = (msg) => { log(who + ' → ' + tool + ' : ' + msg, 'err'); bridge.reply(id, false, msg); };
   if (!t) return fail('outil inconnu sur le téléphone');
-  const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  const a = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } : {};
   try { if (t.check) t.check(a); } catch (e) { return fail(e.message); }
   if (!flipper.connected) return fail('Flipper non connecté au téléphone');
+  const level = typeof t.level === 'function' ? t.level(a) : t.level;
   let how = '';
-  if (t.level !== 'read') {
+  if (level !== 'read') {
     if (autoActive()) {
       how = ' (autonome)';
     } else {
-      const decision = await confirmAction({ tool, args: a, origin, level: t.level, summary: t.describe ? t.describe(a) : tool });
+      const pv = t.preview ? await t.preview(a) : null;
+      const decision = await confirmAction({ tool, args: a, origin, level, preview: pv, summary: t.describe ? t.describe(a) : tool });
       if (decision === 'deny') return fail('refusé par Mikha');
       if (decision === 'auto') addAutonomy();
       how = ' (validé)';
@@ -424,7 +546,7 @@ async function handleCall({ id, tool, args, origin }) {
   }
   try {
     const result = await t.run(a);
-    log(who + ' → ' + tool + how + ' : OK', t.level === 'read' ? 'ok' : 'auto');
+    log(who + ' → ' + tool + (a.path ? ' ' + a.path : '') + how + ' : OK', level === 'read' ? 'ok' : 'auto');
     bridge.reply(id, true, result);
   } catch (e) {
     fail(e && e.message ? e.message : String(e));
