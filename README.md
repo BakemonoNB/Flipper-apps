@@ -11,7 +11,9 @@ Apps et scripts pour Flipper Zero.
 
 - `apps/<nom>/` : apps C (`.fap`), compilées avec [ufbt](https://github.com/flipperdevices/flipperzero-ufbt).
 - `scripts/<nom>.js` : scripts JavaScript (mJS), sans compilation.
-- `docs/` : pages web pour le téléphone (`docs/ble-test/` : test de connexion Bluetooth au Flipper, à ouvrir dans Bluefy).
+- `docs/` : pages web pour le téléphone, à ouvrir dans Bluefy (iOS) :
+  - `docs/app/` : l'app (écran du Flipper en direct + boutons). `flipper.js` = client Bluetooth + RPC.
+  - `docs/ble-test/` : test de connexion et ping RPC.
 
 ## Déploiement
 

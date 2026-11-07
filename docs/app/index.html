@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Flipper Pont</title>
+<style>
+  :root {
+    --bg: #f5f5f3; --fg: #17171a; --muted: #6a6a72; --card: #ffffff; --border: #d8d8dd;
+    --accent: #ff8200; --bezel: #2b2b30; --ok: #1d8a3a; --err: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111114; --fg: #ececf0; --muted: #9a9aa3; --card: #1c1c21; --border: #2f2f36; --bezel: #000; --ok: #4cc36a; --err: #ff6b6b; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; max-width: 520px; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 -apple-system, system-ui, sans-serif;
+    padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .status { flex: 1; color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status.on { color: var(--ok); }
+  button { font: inherit; color: inherit; border-radius: 12px; border: 1px solid var(--border); background: var(--card); padding: 10px 16px; }
+  button:disabled { opacity: .4; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button.link { border: 0; background: none; color: var(--muted); text-decoration: underline; padding: 8px 0; }
+  .screen-wrap { background: var(--bezel); border-radius: 14px; padding: 10px; }
+  canvas { display: block; width: 100%; aspect-ratio: 2 / 1; image-rendering: pixelated; border-radius: 6px; background: var(--accent); }
+  body:not(.connected) canvas { opacity: .45; }
+  .meta { color: #8a8a92; font-size: 12px; text-align: right; min-height: 16px; margin-top: 4px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 300px; margin: 20px auto 8px; }
+  .pad button {
+    height: 64px; display: grid; place-items: center; padding: 0; font-weight: 700;
+    touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  .pad button svg { width: 22px; height: 22px; fill: currentColor; }
+  .pad button.center { border-radius: 50%; width: 64px; justify-self: center; }
+  .pad button.active { background: var(--accent); border-color: var(--accent); color: #111; }
+  .hint { color: var(--muted); font-size: 13px; text-align: center; margin: 0 0 16px; }
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+  summary { cursor: pointer; font-weight: 600; }
+  #log { max-height: 240px; overflow: auto; margin: 8px 0; white-space: pre-wrap; word-break: break-all; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+</style>
+</head>
+<body>
+<header>
+  <div id="status" class="status">Déconnecté</div>
+  <button id="main" class="primary">Connecter</button>
+</header>
+
+<section class="screen-wrap">
+  <canvas id="screen" width="128" height="64" aria-label="Écran du Flipper"></canvas>
+  <div id="fps" class="meta"></div>
+</section>
+
+<section class="pad" aria-label="Boutons du Flipper">
+  <span></span>
+  <button data-key="UP" aria-label="Haut"><svg viewBox="0 0 24 24"><path d="M12 6l8 10H4z"/></svg></button>
+  <span></span>
+  <button data-key="LEFT" aria-label="Gauche"><svg viewBox="0 0 24 24"><path d="M6 12l10-8v16z"/></svg></button>
+  <button data-key="OK" class="center" aria-label="OK">OK</button>
+  <button data-key="RIGHT" aria-label="Droite"><svg viewBox="0 0 24 24"><path d="M18 12L8 20V4z"/></svg></button>
+  <span></span>
+  <button data-key="DOWN" aria-label="Bas"><svg viewBox="0 0 24 24"><path d="M12 18L4 8h16z"/></svg></button>
+  <button data-key="BACK" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M10 5L3 11l7 6v-4h5a4 4 0 010 8h-3v2h3a6 6 0 000-12h-5z"/></svg></button>
+</section>
+<p class="hint">Tap = appui court · garder 0,5 s = appui long</p>
+
+<details>
+  <summary>Journal</summary>
+  <div id="log"></div>
+  <button id="copy">Copier le journal</button>
+</details>
+<button id="other" class="link">Choisir dans la liste complète des appareils</button>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
