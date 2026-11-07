@@ -269,7 +269,7 @@ export class Flipper extends EventTarget {
     const id = this.nextId;
     this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
     const bodies = Array.isArray(body) ? body : [body];
-    const frame = concat(...bodies.map((b, i) => encodeRequest(id, field, b, i < bodies.length - 1)));
+    const frames = bodies.map((b, i) => encodeRequest(id, field, b, i < bodies.length - 1));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -280,7 +280,7 @@ export class Flipper extends EventTarget {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
       });
-      this._write(frame).catch((e) => {
+      this._writeFrames(frames).catch((e) => {
         const p = this.pending.get(id);
         if (p) { this.pending.delete(id); p.reject(e); }
       });
@@ -419,34 +419,69 @@ export class Flipper extends EventTarget {
 
   // ---------- interne ----------
 
-  _write(bytes) {
-    // Une seule opération GATT à la fois : Web Bluetooth refuse les écritures simultanées.
-    // TODO étape 5 : respecter la place libre annoncée par `flow` pour les gros transferts.
+  // Lit la place réellement libre dans le tampon du Flipper (null si la caractéristique manque).
+  async _readFree() {
+    if (!this.flow) return null;
+    try { return (await this.flow.readValue()).getUint32(0, false); } catch { return null; }
+  }
+
+  // Écrit les messages d'une commande d'un seul tenant (sans qu'une autre commande s'intercale :
+  // le Flipper refuserait une commande en plusieurs messages interrompue). Pour un gros message,
+  // on attend que le Flipper ait vraiment la place, en relisant la valeur plutôt qu'en la calculant.
+  _writeFrames(frames) {
+    if (frames.length === 1 && frames[0].length <= 64) return this._write(frames[0]);
     const run = async () => {
-      let o = 0;
-      while (o < bytes.length) {
-        if (!this.rx) throw new Error('Flipper déconnecté');
-        const part = bytes.subarray(o, o + this.chunk);
-        await this._waitFlow(part.length);
-        try {
-          if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
-          else await this.rx.writeValue(part);
-        } catch (e) {
-          // Écriture avec réponse refusée : les octets n'ont pas été pris, on peut les renvoyer plus petits.
-          if (this.chunk > MIN_CHUNK && this.rx) {
-            this.chunk = MIN_CHUNK;
-            this.dispatchEvent(new CustomEvent('notice', { detail: 'écriture de ' + part.length + ' octets refusée (' + errText(e) + ') : passage à des morceaux de ' + MIN_CHUNK + ' octets' }));
-            continue;
-          }
-          throw new Error('écriture Bluetooth refusée (' + part.length + ' octets) : ' + errText(e));
+      for (let i = 0; i < frames.length; i++) {
+        const f = frames[i];
+        const t0 = Date.now();
+        let free = await this._readFree();
+        while (free !== null && free < f.length) {
+          if (Date.now() - t0 > 10000) throw new Error('le Flipper n\'a pas libéré de place en 10 s (message ' + (i + 1) + '/' + frames.length + ', ' + free + ' octets libres pour ' + f.length + ')');
+          await new Promise((r) => setTimeout(r, 40));
+          free = await this._readFree();
         }
-        if (this.flowFree !== null) this.flowFree = Math.max(0, this.flowFree - part.length);
-        o += part.length;
+        if (free !== null) this.flowFree = free;
+        try {
+          await this._send(f);
+        } catch (e) {
+          throw new Error(e.message + ' (message ' + (i + 1) + '/' + frames.length + ', place lue avant : ' + free + ')');
+        }
       }
     };
     const p = this.writeChain.then(run);
     this.writeChain = p.catch(() => {});
     return p;
+  }
+
+  _write(bytes) {
+    // Une seule opération GATT à la fois : Web Bluetooth refuse les écritures simultanées.
+    const p = this.writeChain.then(() => this._send(bytes));
+    this.writeChain = p.catch(() => {});
+    return p;
+  }
+
+  // Envoie des octets en morceaux (à n'appeler que depuis la file writeChain).
+  async _send(bytes) {
+    let o = 0;
+    while (o < bytes.length) {
+      if (!this.rx) throw new Error('Flipper déconnecté');
+      const part = bytes.subarray(o, o + this.chunk);
+      await this._waitFlow(part.length);
+      try {
+        if (this.rx.writeValueWithResponse) await this.rx.writeValueWithResponse(part);
+        else await this.rx.writeValue(part);
+      } catch (e) {
+        // Écriture avec réponse refusée : les octets n'ont pas été pris, on peut les renvoyer plus petits.
+        if (this.chunk > MIN_CHUNK && this.rx) {
+          this.chunk = MIN_CHUNK;
+          this.dispatchEvent(new CustomEvent('notice', { detail: 'écriture de ' + part.length + ' octets refusée (' + errText(e) + ') : passage à des morceaux de ' + MIN_CHUNK + ' octets' }));
+          continue;
+        }
+        throw new Error('écriture Bluetooth refusée (' + part.length + ' octets, à l\'octet ' + o + '/' + bytes.length + ') : ' + errText(e));
+      }
+      if (this.flowFree !== null) this.flowFree = Math.max(0, this.flowFree - part.length);
+      o += part.length;
+    }
   }
 
   // Attend que le tampon du Flipper ait la place d'accueillir n octets.

@@ -235,8 +235,10 @@ flipper.addEventListener('disconnected', () => {
 });
 flipper.addEventListener('error', (e) => log('Erreur de flux : ' + errText(e.detail), 'err'));
 flipper.addEventListener('notice', (e) => log('Bluetooth : ' + e.detail, 'err'));
-flipper.addEventListener('unsolicited', (e) =>
-  log('Message non attendu : id=' + e.detail.id + ' champs=' + e.detail.fields.map((f) => f.field).join(',')));
+flipper.addEventListener('unsolicited', (e) => {
+  const st = e.detail.fields.find((f) => f.field === 2);
+  log('Message non attendu : id=' + e.detail.id + (st ? ' statut=' + st.value : '') + ' champs=' + e.detail.fields.map((f) => f.field).join(','), st ? 'err' : '');
+});
 
 // ---------- Manette ----------
 const ARROWS = new Set([Key.UP, Key.DOWN, Key.LEFT, Key.RIGHT]);
