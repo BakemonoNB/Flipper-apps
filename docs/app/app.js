@@ -51,6 +51,7 @@ let currentTab = 'pad';
 function selectTab(name, { focus = false } = {}) {
   if (!TABS.includes(name)) name = 'pad';
   currentTab = name;
+  document.body.dataset.tab = name;
   for (const t of TABS) {
     const tab = $('tab-' + t);
     const on = t === name;
@@ -74,7 +75,6 @@ document.querySelector('[role="tablist"]').addEventListener('keydown', (e) => {
 const canvas = $('screen');
 const ctx = canvas.getContext('2d');
 const img = ctx.createImageData(SCREEN_W, SCREEN_H);
-let frames = 0;
 let warnedOrientation = false;
 
 function paint(isOn) {
@@ -96,7 +96,6 @@ function drawFrame(data, orientation) {
   const flip = orientation === 1;
   paint((x, y) => flip ? pixelOn(data, SCREEN_W - 1 - x, SCREEN_H - 1 - y) : pixelOn(data, x, y));
   lastFrame = { data: data.slice(0, SCREEN_W * SCREEN_H / 8), orientation, at: Date.now() };
-  frames++;
   for (const r of frameWaiters.splice(0)) r();
 }
 
@@ -120,10 +119,6 @@ function toBase64(u8) {
   return btoa(s);
 }
 
-setInterval(() => {
-  $('fps').textContent = flipper.connected ? frames + ' img/s' : '';
-  frames = 0;
-}, 1000);
 
 // ---------- État général ----------
 const VPS_LABELS = {
@@ -663,6 +658,72 @@ function scrollChat() {
   if (last) last.scrollIntoView({ block: 'end' });
 }
 
+// Markdown minimal et sûr (aucun HTML du modèle n'est interprété) : gras, `code`, blocs de code, listes, titres.
+function mdInline(parent, text) {
+  const re = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parent.append(text.slice(last, m.index));
+    const tok = m[0];
+    const el = document.createElement(tok[0] === '`' ? 'code' : 'strong');
+    el.textContent = tok[0] === '`' ? tok.slice(1, -1) : tok.slice(2, -2);
+    parent.append(el);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+}
+
+function renderMarkdown(el, text) {
+  const parts = text.split(/```[^\n]*\n?([\s\S]*?)```/g); // indices impairs : blocs de code
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) {
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = part.replace(/\n$/, '');
+      pre.append(code);
+      el.append(pre);
+      return;
+    }
+    let para = null;
+    let list = null;
+    for (const line of part.split('\n')) {
+      if (!line.trim()) { para = null; list = null; continue; }
+      const li = /^\s*(?:[-*•]|(\d+)[.)])\s+(.*)$/.exec(line);
+      const h = /^#{1,4}\s+(.*)$/.exec(line);
+      if (li) {
+        const tag = li[1] ? 'OL' : 'UL';
+        if (!list || list.tagName !== tag) { list = document.createElement(tag); el.append(list); para = null; }
+        const item = document.createElement('li');
+        mdInline(item, li[2]);
+        list.append(item);
+        continue;
+      }
+      list = null;
+      if (h) {
+        const p = document.createElement('p');
+        const s = document.createElement('strong');
+        mdInline(s, h[1]);
+        p.append(s);
+        el.append(p);
+        para = null;
+        continue;
+      }
+      if (!para) { para = document.createElement('p'); el.append(para); } else para.append(document.createElement('br'));
+      mdInline(para, line);
+    }
+  });
+}
+
+const SUGGESTIONS = [
+  'Que montre l\'écran du Flipper ?',
+  'Écris un script qui fait clignoter la LED',
+  'Ouvre le menu Sub-GHz et décris-le',
+  'Qu\'as-tu appris sur ce Flipper ?',
+];
+const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>';
+const openActs = new Set(); // groupes d'actions dépliés (survivent au rafraîchissement)
+
 function renderChat() {
   const box = $('chatLog');
   box.textContent = '';
@@ -672,17 +733,54 @@ function renderChat() {
     const p = document.createElement('p');
     p.className = 'chat-empty';
     p.textContent = chat.models.length
-      ? 'Demande quelque chose au modèle. Il peut vérifier le Flipper et appuyer sur ses boutons, avec ta validation.'
+      ? 'Demande quelque chose au modèle : il voit l\'écran, appuie sur les boutons, écrit des scripts et des apps.'
       : 'Connecte le VPS (Réglages) pour discuter avec les modèles.';
     box.appendChild(p);
+    if (chat.models.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'suggest';
+      for (const s of SUGGESTIONS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = s;
+        b.addEventListener('click', () => { $('chatText').value = s; autoGrow(); $('chatText').focus(); });
+        wrap.appendChild(b);
+      }
+      box.appendChild(wrap);
+    }
   }
-  for (const it of items) {
-    const d = document.createElement('div');
-    const role = ['user', 'assistant', 'tool', 'error'].includes(it.role) ? it.role : 'assistant';
-    d.className = 'msg ' + role;
-    d.textContent = role === 'tool' ? 'outil · ' + it.text : it.text;
+  // Les appels d'outils consécutifs sont regroupés en une ligne repliable.
+  let acts = [];
+  let actsKey = 0;
+  const flushActs = () => {
+    if (!acts.length) return;
+    const key = chat.current + ':' + actsKey;
+    const d = document.createElement('details');
+    d.className = 'acts';
+    d.open = openActs.has(key);
+    d.addEventListener('toggle', () => (d.open ? openActs.add(key) : openActs.delete(key)));
+    const counts = {};
+    for (const a of acts) { const n = a.split(' ')[0]; counts[n] = (counts[n] || 0) + 1; }
+    const s = document.createElement('summary');
+    s.innerHTML = GEAR;
+    s.append(acts.length + (acts.length > 1 ? ' actions · ' : ' action · ') +
+      Object.entries(counts).map(([n, c]) => n + (c > 1 ? ' ×' + c : '')).join(' · '));
+    const ul = document.createElement('ul');
+    for (const a of acts) { const li = document.createElement('li'); li.textContent = a; ul.appendChild(li); }
+    d.append(s, ul);
     box.appendChild(d);
-  }
+    acts = [];
+  };
+  items.forEach((it, i) => {
+    if (it.role === 'tool') { if (!acts.length) actsKey = i; acts.push(it.text); return; }
+    flushActs();
+    const d = document.createElement('div');
+    const role = ['user', 'assistant', 'error'].includes(it.role) ? it.role : 'assistant';
+    d.className = 'msg ' + role;
+    if (role === 'assistant') renderMarkdown(d, it.text); else d.textContent = it.text;
+    box.appendChild(d);
+  });
+  flushActs();
   if (live && (!items.length || items[items.length - 1].role !== 'assistant')) {
     const w = document.createElement('div');
     w.className = 'typing';

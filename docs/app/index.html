@@ -81,6 +81,14 @@
   .pill:disabled { opacity: 1; cursor: default; }
   .screen-card.autonomous { box-shadow: 0 0 0 2px #ff8200, 0 0 24px rgba(255,130,0,.35); }
 
+  /* Chat : l'écran devient un mini-lecteur collé en haut (on voit ce que fait le modèle sans perdre la place) */
+  body[data-tab="chat"] .screen-card { position: sticky; top: max(6px, env(safe-area-inset-top)); z-index: 5;
+    display: grid; grid-template-columns: minmax(0, 56%) 1fr; gap: 12px; align-items: center; padding: 8px; }
+  body[data-tab="chat"] .screen-meta { flex-direction: column; align-items: flex-start; justify-content: center; margin: 0; gap: 10px; min-height: 0; }
+  body[data-tab="chat"] .screen-meta .meta-right { flex-wrap: wrap; }
+  body[data-tab="chat"] .screen-empty { inset: 8px auto 8px 8px; width: 56%; font-size: .72em; }
+  body[data-tab="chat"] .topbar { margin-bottom: 8px; }
+
   /* Panneaux */
   .panel { animation: fade .18s ease-out; }
   .panel-title { font-size: 1.05em; font-weight: 700; margin: 4px 0 10px; }
@@ -122,6 +130,22 @@
   .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
   .msg.tool { align-self: flex-start; color: var(--muted); font: .78em/1.35 ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 10px; padding: 4px 9px; }
   .msg.error { align-self: flex-start; color: var(--err); font-size: .9em; background: transparent; padding: 2px 4px; }
+  .msg.assistant { white-space: normal; max-width: 94%; }
+  .msg p { margin: 0 0 .5em; } .msg p:last-child { margin-bottom: 0; }
+  .msg ul, .msg ol { margin: .3em 0 .5em; padding-left: 1.3em; } .msg li + li { margin-top: .2em; }
+  .msg code { font: .86em ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 6px; padding: 1px 5px; }
+  .msg pre { margin: .4em 0; background: #111116; color: #e8e8ee; border-radius: 10px; padding: 10px; overflow-x: auto; font: .78em/1.45 ui-monospace, Menlo, monospace; white-space: pre; }
+  .msg pre code { background: none; padding: 0; color: inherit; font: inherit; }
+  .acts { align-self: flex-start; max-width: 94%; font-size: .8em; color: var(--muted); }
+  .acts summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
+  .acts summary::-webkit-details-marker { display: none; }
+  .acts summary svg { width: 14px; height: 14px; flex: none; }
+  .acts[open] summary { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+  .acts ul { margin: 6px 0 0; padding: 8px 10px 8px 24px; background: var(--surface-2); border-radius: 10px; font: .95em/1.45 ui-monospace, Menlo, monospace; word-break: break-word; }
+  .suggest { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 0 18px; }
+  .suggest button { font: inherit; font-size: .86em; color: var(--fg); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; min-height: 44px; cursor: pointer; text-align: left; }
   .typing { align-self: flex-start; display: flex; gap: 4px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
   .typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite ease-in-out; }
   .typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
@@ -195,7 +219,6 @@
     <div class="screen-meta">
       <span id="deviceName"></span>
       <span class="meta-right">
-        <span id="fps"></span>
         <button id="autoMore" class="pill">Auto</button>
         <button id="autoStop" class="pill stop" aria-label="Arrêter le mode autonome" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none"/></svg>
@@ -224,7 +247,7 @@
       <div class="chat-head">
         <div id="chatModels" class="segmented" role="radiogroup" aria-label="Modèle"></div>
         <button id="chatReset" class="btn small" aria-label="Nouvelle conversation" title="Nouvelle conversation">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
         </button>
       </div>
       <div id="chatLog" class="chat-log"></div>
