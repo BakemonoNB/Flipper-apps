@@ -19,6 +19,7 @@ Apps et scripts pour Flipper Zero.
   - API : `GET /api/status`, `POST /api/call {tool, args}` → relayé au téléphone, qui décide du niveau de l'outil et de la validation.
   - Chat : le téléphone envoie `{type:'chat', model, text}` sur `/ws` ; Claude (`claude -p`, seuls les outils Flipper via `mcp-flipper.js`) ou gpt-oss (Ollama, `num_ctx` 8192). Variables : `STATE_DIR`, `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_CODE_OAUTH_TOKEN`, `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_NUM_CTX`.
   - Outils des modèles : `tools.js` (descriptions) ; niveaux et validation : `docs/app/app.js` (`TOOLS`) ; règles de chemins : `docs/app/policy.js`.
+    Mémoire : `memory_search`, `memory_read` (notes flipper du brain, `BRAIN_DIR`), `memory_note` (brouillon dans `_drafts/inbox/`, relu par le curateur).
     `ping`, `get_screen` (image pour Claude, texte pour gpt-oss), `list_files`, `read_file` (lecture ; dossiers nfc/lfrfid/ibutton/subghz/u2f : validation), `write_file` et `delete_file` (validation, seulement `/ext/apps/Scripts/` et `/ext/apps_data/`), `press_button` et `start_app` (validation), `run_script` (validation avec le code affiché).
   - `server/workspace/` : dossier de travail de Claude (guide `CLAUDE.md` + types du SDK JS officiel, GPL-3.0).
   - Apps C : `build_app` et `install_app` s'exécutent sur le VPS (`server/builds.js`) : compilation par le service `builder/` (`BUILD_URL`, `BUILD_TOKEN`), puis installation par le téléphone (outil interne `install_fap`, validation avec le code source). Lancer un `.fap` avec `start_app` = niveau Exécution.

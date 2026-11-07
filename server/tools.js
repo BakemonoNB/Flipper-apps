@@ -72,6 +72,26 @@ export const TOOLS = [
     }, ['build_id']),
   },
   {
+    name: 'memory_search',
+    description: 'Cherche dans la mémoire partagée (notes du brain sur ce Flipper : protocole, leçons, réussites, pièges). '
+      + 'À faire avant une tâche nouvelle. Renvoie des notes (path, titre, résumé).',
+    inputSchema: obj({ query: { type: 'string', description: 'Mots-clés, ex. « script js écran » ou « installation fap »' } }, ['query']),
+  },
+  {
+    name: 'memory_read',
+    description: 'Lit une note de la mémoire partagée (path renvoyé par memory_search).',
+    inputSchema: obj({ path: { type: 'string', description: 'Chemin de la note' } }, ['path']),
+  },
+  {
+    name: 'memory_note',
+    description: 'Consigne une découverte durable pour les autres modèles (ce qui marche, un piège, une API). '
+      + 'Elle devient un brouillon relu par le curateur. Pas pour les détails d\'une seule conversation.',
+    inputSchema: obj({
+      title: { type: 'string', description: 'Titre court et précis (120 caractères max)' },
+      content: { type: 'string', description: 'Le fait, le contexte, la règle à retenir (4000 caractères max)' },
+    }, ['title', 'content']),
+  },
+  {
     name: 'start_app',
     description: 'Ouvre une app du Flipper par son nom ou le chemin de son .fap, avec un argument facultatif (souvent un fichier à ouvrir).',
     inputSchema: obj({

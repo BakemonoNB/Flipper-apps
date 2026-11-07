@@ -1,18 +1,45 @@
 // Boucle de conversation avec un modèle Ollama (gpt-oss) et appels d'outils.
 // num_ctx doit rester celui du prospecteur (8192) : sinon Ollama charge une 2e copie du modèle en RAM.
 
-const MAX_STEPS = 8; // tours modèle -> outils -> modèle, au plus
+const MAX_STEPS = 12; // tours modèle -> outils -> modèle, au plus
+
+// Estimation grossière (les grilles d'écran se découpent mal en tokens : on reste prudent).
+const estimate = (messages) => Math.ceil(messages.reduce((n, m) => n + JSON.stringify(m).length, 0) / 3);
+
+// Garde l'historique dans le budget de tokens : seule la dernière capture d'écran reste entière,
+// les plus anciens messages partent d'abord, sans jamais retirer le dernier message de Mikha.
+export function fitContext(messages, budget) {
+  const isScreen = (m) => m.role === 'tool' && m.tool_name === 'get_screen';
+  let lastScreen = -1;
+  messages.forEach((m, i) => { if (isScreen(m)) lastScreen = i; });
+  const keep = lastScreen >= 0 ? messages[lastScreen] : null; // repérée par l'objet : les positions vont bouger
+  messages.forEach((m) => { if (isScreen(m) && m !== keep) m.content = '(capture précédente retirée)'; });
+  let lastUser = -1;
+  messages.forEach((m, i) => { if (m.role === 'user') lastUser = i; });
+  while (estimate(messages) > budget && lastUser > 0) {
+    messages.shift();
+    lastUser--;
+    while (lastUser > 0 && messages[0].role !== 'user') { messages.shift(); lastUser--; }
+  }
+  // Toujours trop long : on raccourcit les vieux résultats d'outils de ce tour.
+  for (let i = 0; i < messages.length && estimate(messages) > budget; i++) {
+    const m = messages[i];
+    if (m.role === 'tool' && m !== keep && m.content.length > 400) m.content = m.content.slice(0, 400) + '…(coupé)';
+  }
+  return messages;
+}
 
 // messages : historique sans le message système (modifié sur place : la réponse y est ajoutée).
 // onEvent({event:'text', text}) | onEvent({event:'tool', tool, args})
 // callTool(name, args) -> Promise<{ok, result|error}>
-export async function runOllama({ url, model, numCtx = 8192, think = 'low', systemPrompt, messages, text, tools,
-  callTool, onEvent, timeoutMs = 300000 }) {
+export async function runOllama({ url, model, numCtx = 8192, think = 'medium', systemPrompt, messages, text, tools,
+  callTool, onEvent, timeoutMs = 300000, historyBudget = 3800 }) {
   messages.push({ role: 'user', content: text });
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
+      fitContext(messages, historyBudget);
       const res = await fetch(url.replace(/\/$/, '') + '/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

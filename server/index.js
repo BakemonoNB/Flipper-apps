@@ -3,6 +3,7 @@
 //   PHONE_TOKEN : jeton de l'app téléphone (WebSocket /ws),
 //   API_TOKEN   : jeton des appelants de l'API (/api/*, et /logs),
 //   LOGS_TOKEN  : jeton de lecture du journal (/logs).
+// Mémoire : BRAIN_DIR (/srv/brain/_Claude) : lecture des notes flipper, écriture dans _drafts/inbox/.
 // Compilation : BUILD_URL (http://127.0.0.1:3050), BUILD_TOKEN (service builder/).
 // Chat : STATE_DIR (~/.flipper-bridge), CLAUDE_BIN (claude), CLAUDE_MODEL (vide = modèle par défaut),
 //   OLLAMA_URL (http://127.0.0.1:11434), OLLAMA_MODEL (gpt-oss:20b), OLLAMA_NUM_CTX (8192, celui du prospecteur).
@@ -18,6 +19,7 @@ import { createBridge, HttpError } from './bridge.js';
 import { requestAuthorized } from './auth.js';
 import { createChat } from './chat.js';
 import { createBuilds } from './builds.js';
+import { createMemory } from './memory.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -32,6 +34,7 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gpt-oss:20b';
 const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
 const BUILD_URL = process.env.BUILD_URL || 'http://127.0.0.1:3050';
 const BUILD_TOKEN = process.env.BUILD_TOKEN || '';
+const BRAIN_DIR = process.env.BRAIN_DIR || '/srv/brain/_Claude';
 const RING_SIZE = 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -60,8 +63,13 @@ export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks
 // Outils exécutés sur le VPS ; les autres sont relayés au téléphone.
 // install_fap est interne : seul install_app (donc un .fap sorti du builder) peut l'appeler.
 const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+const memory = createMemory({ brainDir: BRAIN_DIR, log });
 const INTERNAL_TOOLS = new Set(['install_fap']);
 export async function callTool(name, args, origin) {
+  const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  if (name === 'memory_search') return memory.search(a);
+  if (name === 'memory_read') return memory.read(a);
+  if (name === 'memory_note') return memory.note(a, origin);
   if (name === 'build_app') return builds.build(args);
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
@@ -100,6 +108,8 @@ export const chat = createChat({
     'gpt-oss': { label: 'gpt-oss 20b (local)', kind: 'ollama', model: OLLAMA_MODEL },
   },
   systemPrompt: readFileSync(new URL('./prompt.md', import.meta.url), 'utf8'),
+  ollamaPrompt: readFileSync(new URL('./prompt-gptoss.md', import.meta.url), 'utf8'),
+  ollamaThink: process.env.OLLAMA_THINK || 'medium',
   stateDir: STATE_DIR,
   workDir: fileURLToPath(new URL('./workspace', import.meta.url)),
   mcpConfigPath,

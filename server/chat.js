@@ -16,8 +16,8 @@ const MAX_HISTORY = 100;     // entrées affichées par modèle
 const MAX_OLLAMA_MSGS = 24;  // messages gardés dans le contexte de gpt-oss
 
 // workDir : dossier de travail de Claude (documentation lisible avec Read : CLAUDE.md, types du SDK JS).
-export function createChat({ models, systemPrompt, stateDir, workDir, mcpConfigPath, claudeBin, ollamaUrl, ollamaNumCtx,
-  log, sendToPhone, callTool }) {
+export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, ollamaThink = 'medium', stateDir, workDir, mcpConfigPath,
+  claudeBin, ollamaUrl, ollamaNumCtx, log, sendToPhone, callTool }) {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const file = join(stateDir, 'chat.json');
   let state = { conversations: {} };
@@ -45,7 +45,7 @@ export function createChat({ models, systemPrompt, stateDir, workDir, mcpConfigP
     const r = await callTool(name, args, model);
     if (r.ok && name === 'get_screen') {
       try {
-        return { ok: true, result: { ecran: screenToText(r.result, 2), note: 'image réduite de moitié (# = allumé) : le petit texte peut être illisible ; pour un résultat précis, fais écrire le script dans un fichier puis lis-le' } };
+        return { ok: true, result: { ecran: screenToText(r.result, 1), note: '128x64, # = pixel allumé' } };
       } catch (e) { return { ok: false, error: e.message }; }
     }
     return r;
@@ -97,14 +97,14 @@ export function createChat({ models, systemPrompt, stateDir, workDir, mcpConfigP
           throw e;
         }
       } else {
-        const before = c.ollamaMessages.length;
+        const snapshot = c.ollamaMessages.map((m) => ({ ...m }));
         try {
           await runOllama({
-            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, systemPrompt, messages: c.ollamaMessages, text,
+            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, think: ollamaThink, systemPrompt: ollamaPrompt, messages: c.ollamaMessages, text,
             tools: ollamaTools(), callTool: (name, args) => callForText(name, args, model), onEvent,
           });
         } catch (e) {
-          c.ollamaMessages.length = before; // on oublie le tour raté plutôt que de garder un contexte incohérent
+          c.ollamaMessages.splice(0, c.ollamaMessages.length, ...snapshot); // on oublie le tour raté
           throw e;
         }
         if (c.ollamaMessages.length > MAX_OLLAMA_MSGS) c.ollamaMessages.splice(0, c.ollamaMessages.length - MAX_OLLAMA_MSGS);
