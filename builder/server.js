@@ -129,14 +129,15 @@ function readBody(req) {
     let size = 0;
     req.on('data', (d) => {
       size += d.length;
-      if (size > MAX_BODY) {
-        reject(Object.assign(new Error('corps trop gros'), { status: 413 }));
-        req.destroy();
-        return;
-      }
-      chunks.push(d);
+      // Au-delà de la limite, on jette la suite sans couper la connexion, pour pouvoir répondre 413.
+      if (size > MAX_BODY) chunks.length = 0;
+      else chunks.push(d);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('end', () =>
+      size > MAX_BODY
+        ? reject(Object.assign(new Error('corps trop gros (1 Mo max)'), { status: 413 }))
+        : resolve(Buffer.concat(chunks)),
+    );
     req.on('error', reject);
   });
 }

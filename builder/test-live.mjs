@@ -52,6 +52,10 @@ r = await build({ 'application.fam': FAM(), '../x': 'a' });
 check('chemin « ../x » refusé', r.status === 400 && !r.body.ok, r.body.log);
 r = await build({ 'application.fam': FAM(), '/etc/x': 'a' });
 check('chemin absolu refusé', r.status === 400 && !r.body.ok, r.body.log);
+r = await build({ 'application.fam': FAM(), 'big.c': 'x'.repeat(600 * 1024) });
+check('plus de 512 Ko refusé', r.status === 400 && /trop gros/.test(r.body.log), r.body.log);
+r = await build({ 'application.fam': FAM(), 'big.c': 'x'.repeat(1200 * 1024) });
+check('corps de plus de 1 Mo -> 413', r.status === 413, r.body.log);
 
 // a) hello world
 r = await build({ 'application.fam': FAM(), 'hello.c': HELLO_C });
