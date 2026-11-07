@@ -1,5 +1,7 @@
 // Lance Claude Code en mode non interactif (claude -p) et relaie ses évènements.
-// Seuls les outils Flipper (via le serveur MCP local) et la lecture de fichiers sont autorisés.
+// Seuls les outils Flipper (serveur MCP local) sont autorisés explicitement. La lecture de fichiers reste
+// celle par défaut de Claude Code : limitée au dossier de travail (guide + types du SDK JS). Ne PAS ajouter
+// Read/Glob/Grep sans chemin : Claude pourrait lire /proc/self/environ (jeton OAuth) ou la config MCP (API_TOKEN).
 import { spawn } from 'node:child_process';
 
 const MCP_PREFIX = 'mcp__flipper__';
@@ -9,7 +11,7 @@ const DENIED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch'
 // Résout {sessionId}. Rejette avec une Error lisible.
 export function runClaude({ bin = 'claude', model = '', text, sessionId = null, systemPrompt, mcpConfigPath,
   toolNames, cwd, timeoutMs = 300000, onEvent }) {
-  const allowed = [...toolNames.map((n) => MCP_PREFIX + n), 'Read', 'Glob', 'Grep'];
+  const allowed = toolNames.map((n) => MCP_PREFIX + n);
   const args = [
     '-p',
     '--output-format', 'stream-json',
