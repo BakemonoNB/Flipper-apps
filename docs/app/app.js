@@ -261,6 +261,135 @@ $('vpsSave').addEventListener('click', () => {
   bridge.configure(s.url, s.token);
 }
 
+// ---------- Chat ----------
+const CHAT_MODEL_KEY = 'flipper-chat-model';
+const chat = { models: [], histories: {}, current: null, live: null }; // live : {id, model} pendant une réponse
+
+function chatControls() {
+  const online = bridge.status === 'online';
+  $('chatSend').disabled = !online || !!chat.live || !chat.current;
+  $('chatReset').disabled = !online || !!chat.live || !chat.current;
+  $('chatModel').disabled = !!chat.live;
+  $('chatText').placeholder = online ? 'Demande au modèle…' : 'VPS non connecté';
+}
+
+function renderChat() {
+  const box = $('chatLog');
+  box.textContent = '';
+  const items = chat.histories[chat.current] || [];
+  if (!items.length && !(chat.live && chat.live.model === chat.current)) {
+    const p = document.createElement('p');
+    p.className = 'chat-empty';
+    p.textContent = chat.models.length ? 'Aucun message.' : 'Connecte le VPS pour discuter avec les modèles.';
+    box.appendChild(p);
+  }
+  for (const it of items) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + (['user', 'assistant', 'tool', 'error'].includes(it.role) ? it.role : 'assistant');
+    d.textContent = it.role === 'tool' ? 'outil : ' + it.text : it.text;
+    box.appendChild(d);
+  }
+  if (chat.live && chat.live.model === chat.current) {
+    const last = items[items.length - 1];
+    if (!last || last.role !== 'assistant') {
+      const w = document.createElement('div');
+      w.className = 'msg wait';
+      w.textContent = 'réflexion…';
+      box.appendChild(w);
+    }
+  }
+  box.scrollTop = box.scrollHeight;
+  chatControls();
+}
+
+function pushChat(model, role, text) {
+  const h = chat.histories[model] || (chat.histories[model] = []);
+  const last = h[h.length - 1];
+  // Le texte d'une réponse arrive en morceaux : on les recolle dans la même bulle.
+  if (role === 'assistant' && last && last.role === 'assistant' && last.live) last.text += text;
+  else h.push({ role, text, live: role === 'assistant' });
+  if (h.length > 200) h.splice(0, h.length - 200);
+}
+
+function setModels(models) {
+  chat.models = Array.isArray(models) ? models : [];
+  const sel = $('chatModel');
+  sel.textContent = '';
+  for (const m of chat.models) {
+    const o = document.createElement('option');
+    o.value = m.id;
+    o.textContent = m.label;
+    sel.appendChild(o);
+  }
+  let saved = null;
+  try { saved = localStorage.getItem(CHAT_MODEL_KEY); } catch { /* stockage indisponible */ }
+  chat.current = chat.models.some((m) => m.id === saved) ? saved : (chat.models[0] ? chat.models[0].id : null);
+  if (chat.current) sel.value = chat.current;
+  renderChat();
+}
+
+bridge.addEventListener('message', (e) => {
+  const m = e.detail;
+  if (m.type === 'welcome') {
+    setModels(m.models);
+  } else if (m.type === 'chat_history') {
+    if (chat.live && chat.live.model === m.model) return; // une réponse est en cours : on garde l'affichage local
+    chat.histories[m.model] = (m.items || []).map((it) => ({ role: it.role, text: it.text }));
+    if (m.model === chat.current) renderChat();
+  } else if (m.type === 'chat_event') {
+    if (m.event === 'text') pushChat(m.model, 'assistant', m.text || '');
+    else if (m.event === 'tool') {
+      pushChat(m.model, 'tool', m.tool + ' ' + JSON.stringify(m.args || {}));
+      log('Chat ' + m.model + ' → outil ' + m.tool);
+    } else if (m.event === 'error') {
+      pushChat(m.model, 'error', m.error || 'erreur');
+      if (chat.live && chat.live.id === m.id) chat.live = null;
+    } else if (m.event === 'done') {
+      if (chat.live && chat.live.id === m.id) chat.live = null;
+    }
+    const h = chat.histories[m.model];
+    if (h && (m.event === 'done' || m.event === 'error')) for (const it of h) it.live = false;
+    if (m.model === chat.current) renderChat();
+    else chatControls();
+  }
+});
+
+$('chatModel').addEventListener('change', () => {
+  chat.current = $('chatModel').value;
+  try { localStorage.setItem(CHAT_MODEL_KEY, chat.current); } catch { /* stockage indisponible */ }
+  renderChat();
+});
+
+$('chatSend').addEventListener('click', () => {
+  const text = $('chatText').value.trim();
+  if (!text || !chat.current || chat.live) return;
+  const id = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  if (!bridge.send({ type: 'chat', id, model: chat.current, text })) {
+    log('Chat : VPS non connecté.', 'err');
+    return;
+  }
+  chat.live = { id, model: chat.current };
+  for (const it of chat.histories[chat.current] || []) it.live = false;
+  pushChat(chat.current, 'user', text);
+  $('chatText').value = '';
+  renderChat();
+});
+
+$('chatReset').addEventListener('click', () => {
+  if (chat.current && !chat.live) bridge.send({ type: 'chat_reset', model: chat.current });
+});
+
+bridge.addEventListener('status', () => {
+  if (bridge.status !== 'online' && chat.live) {
+    // La réponse continue côté VPS ; on la retrouvera dans l'historique à la reconnexion.
+    pushChat(chat.live.model, 'error', 'connexion au VPS perdue : la réponse arrivera à la reconnexion');
+    chat.live = null;
+    renderChat();
+  }
+  chatControls();
+});
+renderChat();
+
 // ---------- Divers ----------
 $('copy').addEventListener('click', async () => {
   try {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 process.env.LOGS_TOKEN = 'jeton-logs';
 process.env.API_TOKEN = 'jeton-api';
 process.env.PHONE_TOKEN = 'jeton-tel';
+process.env.STATE_DIR = (await import('node:fs')).mkdtempSync((await import('node:os')).tmpdir() + '/fb-test-');
 const { server, log } = await import('./index.js');
 
 let base, wsUrl;

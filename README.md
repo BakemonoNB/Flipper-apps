@@ -17,6 +17,8 @@ Apps et scripts pour Flipper Zero.
 - `server/` : pont VPS ↔ téléphone (Node 24, sans dépendance). `node index.js` ; `node --test` pour les tests.
   - Variables : `PORT`, `HOST`, `PHONE_TOKEN` (app téléphone, WebSocket `/ws`), `API_TOKEN` (appelants de `/api/*` et `/logs`), `LOGS_TOKEN` (`/logs`).
   - API : `GET /api/status`, `POST /api/call {tool, args}` → relayé au téléphone, qui décide du niveau de l'outil et de la validation.
+  - Chat : le téléphone envoie `{type:'chat', model, text}` sur `/ws` ; Claude (`claude -p`, seuls les outils Flipper via `mcp-flipper.js`) ou gpt-oss (Ollama, `num_ctx` 8192). Variables : `STATE_DIR`, `CLAUDE_BIN`, `CLAUDE_MODEL`, `CLAUDE_CODE_OAUTH_TOKEN`, `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_NUM_CTX`.
+  - Outils des modèles : `tools.js` (descriptions) ; niveaux et validation : `docs/app/app.js` (`TOOLS`).
 
 ## Déploiement
 

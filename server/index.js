@@ -3,18 +3,31 @@
 //   PHONE_TOKEN : jeton de l'app téléphone (WebSocket /ws),
 //   API_TOKEN   : jeton des appelants de l'API (/api/*, et /logs),
 //   LOGS_TOKEN  : jeton de lecture du journal (/logs).
+// Chat : STATE_DIR (~/.flipper-bridge), CLAUDE_BIN (claude), CLAUDE_MODEL (vide = modèle par défaut),
+//   OLLAMA_URL (http://127.0.0.1:11434), OLLAMA_MODEL (gpt-oss:20b), OLLAMA_NUM_CTX (8192, celui du prospecteur).
+//   Claude sous l'utilisateur flipper : CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { acceptUpgrade } from './ws.js';
 import { createBridge, HttpError } from './bridge.js';
 import { requestAuthorized } from './auth.js';
+import { createChat } from './chat.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
 const PHONE_TOKEN = process.env.PHONE_TOKEN || '';
 const API_TOKEN = process.env.API_TOKEN || '';
 const LOGS_TOKEN = process.env.LOGS_TOKEN || '';
+const WANTED_STATE_DIR = process.env.STATE_DIR || join(homedir(), '.flipper-bridge');
+const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || '';
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gpt-oss:20b';
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
 const RING_SIZE = 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -37,7 +50,53 @@ export function log(level, msg) {
   (level === 'ERROR' ? console.error : console.log)(line);
 }
 
-export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log });
+const hooks = {};
+export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks });
+
+// Dossier d'état (historique du chat, config MCP). Repli dans /tmp plutôt que de planter au démarrage.
+const STATE_DIR = (() => {
+  try {
+    mkdirSync(WANTED_STATE_DIR, { recursive: true, mode: 0o700 });
+    return WANTED_STATE_DIR;
+  } catch (e) {
+    const fallback = join(tmpdir(), 'flipper-bridge-' + (process.getuid ? process.getuid() : 'x'));
+    mkdirSync(fallback, { recursive: true, mode: 0o700 });
+    log('WARN', 'STATE_DIR ' + WANTED_STATE_DIR + ' inutilisable (' + e.code + ') : repli sur ' + fallback + ', historique perdu au redémarrage');
+    return fallback;
+  }
+})();
+
+// Configuration MCP pour Claude : seul le serveur Flipper, qui appelle l'API locale avec API_TOKEN.
+const mcpConfigPath = join(STATE_DIR, 'mcp-flipper.json');
+writeFileSync(mcpConfigPath, JSON.stringify({
+  mcpServers: {
+    flipper: {
+      type: 'stdio',
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./mcp-flipper.js', import.meta.url))],
+      env: { FLIPPER_API_URL: 'http://127.0.0.1:' + PORT, API_TOKEN },
+    },
+  },
+}), { mode: 0o600 });
+
+export const chat = createChat({
+  models: {
+    claude: { label: 'Claude', kind: 'claude', model: CLAUDE_MODEL },
+    'gpt-oss': { label: 'gpt-oss 20b (local)', kind: 'ollama', model: OLLAMA_MODEL },
+  },
+  systemPrompt: readFileSync(new URL('./prompt.md', import.meta.url), 'utf8'),
+  stateDir: STATE_DIR,
+  mcpConfigPath,
+  claudeBin: CLAUDE_BIN,
+  ollamaUrl: OLLAMA_URL,
+  ollamaNumCtx: OLLAMA_NUM_CTX,
+  log,
+  sendToPhone: (obj) => bridge.send(obj),
+  callTool: (name, args) => bridge.call(name, args),
+});
+hooks.onChat = (msg) => { chat.handle(msg); };
+hooks.onChatReset = (model) => chat.reset(model);
+hooks.welcome = () => ({ models: chat.list(), histories: chat.histories() });
 
 const remoteOf = (req) => req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 

@@ -5,8 +5,10 @@
 //   téléphone -> serveur : {type:'auth', token}            premier message, sous 5 s
 //                          {type:'state', state}           état du Flipper (connecté, nom, batterie)
 //                          {type:'result', id, ok, result|error}
-//   serveur -> téléphone : {type:'welcome', commit}
+//                          {type:'chat', …} {type:'chat_reset', …}   voir chat.js
+//   serveur -> téléphone : {type:'welcome', commit, models}
 //                          {type:'call', id, tool, args}
+//                          {type:'chat_event', …} {type:'chat_history', …}   voir chat.js
 import { tokenOk } from './auth.js';
 
 const AUTH_TIMEOUT_MS = 5000;
@@ -20,7 +22,8 @@ export class HttpError extends Error {
   }
 }
 
-export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000 }) {
+// hooks (facultatifs, branchés après coup) : onChat(msg), onChatReset(model), welcome() -> {models, histories}
+export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, hooks = {} }) {
   let phone = null; // { ws, since, state }
   let nextId = 1;
   const pending = new Map(); // id -> { ws, resolve, reject, timer }
@@ -65,12 +68,18 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000 }
           phone.ws.close(4000, 'remplacée par une nouvelle connexion');
         }
         phone = { ws, since: new Date().toISOString(), state: null };
-        ws.send(JSON.stringify({ type: 'welcome', commit }));
+        const extra = hooks.welcome ? hooks.welcome() : { models: [], histories: [] };
+        ws.send(JSON.stringify({ type: 'welcome', commit, models: extra.models }));
+        for (const h of extra.histories) ws.send(JSON.stringify(h));
         log('INFO', 'téléphone connecté (' + remote + ')');
         return;
       }
 
-      if (msg.type === 'state') {
+      if (msg.type === 'chat') {
+        if (hooks.onChat) hooks.onChat(msg);
+      } else if (msg.type === 'chat_reset') {
+        if (hooks.onChatReset) hooks.onChatReset(msg.model);
+      } else if (msg.type === 'state') {
         if (phone && phone.ws === ws) phone.state = cleanState(msg.state);
       } else if (msg.type === 'result') {
         const p = pending.get(msg.id);
@@ -112,11 +121,18 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000 }
     });
   }
 
+  // Envoie un message au téléphone s'il est connecté. Renvoie false sinon.
+  function send(obj) {
+    if (!phone) return false;
+    phone.ws.send(JSON.stringify(obj));
+    return true;
+  }
+
   function status() {
     return { phone: phone ? { since: phone.since, state: phone.state } : null };
   }
 
-  return { onConnection, call, status };
+  return { onConnection, call, status, send };
 }
 
 function cleanState(s) {
