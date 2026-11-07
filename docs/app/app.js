@@ -782,6 +782,20 @@ $('chatReset').addEventListener('click', () => {
   }
 });
 
+// ---------- Mise à jour de l'app ----------
+// GitHub Pages met les fichiers en cache 10 min : on les redemande au réseau, puis on recharge.
+const APP_FILES = ['./', './index.html', './app.js', './flipper.js', './bridge.js', './policy.js'];
+$('updateApp').addEventListener('click', async () => {
+  $('updateApp').disabled = true;
+  $('updateApp').textContent = 'Mise à jour…';
+  try {
+    await Promise.all(APP_FILES.map((f) => fetch(f, { cache: 'reload' })));
+  } catch (e) {
+    log('Mise à jour : ' + e.message, 'err');
+  }
+  location.reload();
+});
+
 // ---------- Journal ----------
 $('copy').addEventListener('click', async () => {
   try {
