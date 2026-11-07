@@ -1,0 +1,25 @@
+[Unit]
+Description=Flipper builder (compilation .fap en conteneur jetable, BakemonoNB/Flipper-apps builder/)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+# root : pilote Docker. Le code vient d'un clone root-only (/opt/flipper-builder), jamais de /opt/flipper-apps.
+User=root
+WorkingDirectory=/opt/flipper-builder/builder
+EnvironmentFile=/etc/flipper-builder.env
+RuntimeDirectory=flipper-builder
+RuntimeDirectoryMode=0700
+Environment=HOME=/run/flipper-builder
+Environment=DOCKER_CONFIG=/run/flipper-builder/docker
+ExecStart=/usr/bin/node /opt/flipper-builder/builder/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/flipper-builder
+
+[Install]
+WantedBy=multi-user.target

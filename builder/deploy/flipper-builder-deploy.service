@@ -1,0 +1,6 @@
+[Unit]
+Description=Flipper builder : git pull du clone root + redémarrage si builder/ a changé
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/flipper-builder-deploy.sh
