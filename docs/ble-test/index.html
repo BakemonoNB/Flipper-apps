@@ -179,9 +179,10 @@ async function connect(all) {
     for (const c of chars) {
       const p = c.properties;
       log('  ' + c.uuid + ' [' + ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter((k) => p[k]).join(', ') + ']');
-      if (c.uuid === RX_CHAR) rxChar = c;
-      if (c.uuid === TX_CHAR) txChar = c;
-      if (c.uuid === FLOW_CHAR) flowChar = c;
+      const uuid = c.uuid.toLowerCase(); // Bluefy renvoie les UUID en majuscules
+      if (uuid === RX_CHAR) rxChar = c;
+      if (uuid === TX_CHAR) txChar = c;
+      if (uuid === FLOW_CHAR) flowChar = c;
     }
     // Repli si les UUID connus ne sont pas là : choix par propriétés.
     if (!rxChar) rxChar = chars.find((c) => (c.properties.write || c.properties.writeWithoutResponse) && !c.properties.notify && !c.properties.indicate) || null;
