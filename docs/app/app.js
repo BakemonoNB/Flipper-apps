@@ -1,7 +1,11 @@
 import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn } from './flipper.js';
+import { BridgeClient } from './bridge.js';
 
 const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
+const bridge = new BridgeClient();
+const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
+const SETTINGS_KEY = 'flipper-bridge';
 const LONG_MS = 500;     // au-delà : appui long
 const REPEAT_MS = 150;   // répétition des flèches pendant un appui long
 const ON = [0, 0, 0];
@@ -63,8 +67,11 @@ function render() {
   const status = $('status');
   status.textContent = busy || (connected
     ? flipper.name + (battery != null ? ' · ' + battery + ' %' : '')
-    : 'Déconnecté');
+    : 'Flipper déconnecté');
   status.className = 'status' + (connected ? ' on' : '');
+  const vps = $('vpsStatus');
+  vps.textContent = 'VPS : ' + VPS_LABELS[bridge.status];
+  vps.className = 'status small' + (bridge.status === 'online' ? ' on' : bridge.status === 'refused' ? ' bad' : '');
   document.body.classList.toggle('connected', connected);
   $('other').hidden = connected;
   for (const b of document.querySelectorAll('[data-key]')) b.disabled = !connected;
@@ -105,6 +112,7 @@ async function connectFlow() {
   battery = await flipper.battery();
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
   render();
+  sendState();
   keepAwake();
   try {
     await flipper.startScreen();
@@ -131,6 +139,7 @@ flipper.addEventListener('disconnected', () => {
   log('Déconnecté.', 'err');
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   render();
+  sendState();
 });
 flipper.addEventListener('error', (e) => log('Erreur de flux : ' + e.detail.message, 'err'));
 flipper.addEventListener('unsolicited', (e) =>
@@ -172,6 +181,84 @@ for (const btn of document.querySelectorAll('[data-key]')) {
   btn.addEventListener('pointerup', up);
   btn.addEventListener('pointercancel', up);
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// ---------- Pont VPS ----------
+const VPS_LABELS = {
+  off: 'non configuré',
+  connecting: 'connexion…',
+  online: 'connecté',
+  refused: 'jeton refusé',
+  replaced: 'pris par un autre appareil',
+  offline: 'hors ligne, nouvel essai…',
+};
+
+// Outils que le VPS peut demander. Le niveau est décidé ICI, jamais par le message du serveur.
+// Niveaux : read (sans validation) ; write, action, emit : validation sur le téléphone (étape 5).
+const TOOLS = {
+  ping: { level: 'read', run: async () => ({ latencyMs: Math.round(await flipper.ping()) }) },
+};
+
+async function handleCall({ id, tool, args }) {
+  const t = Object.hasOwn(TOOLS, tool) ? TOOLS[tool] : null;
+  const fail = (msg) => { log('VPS → ' + tool + ' refusé : ' + msg, 'err'); bridge.reply(id, false, msg); };
+  if (!t) return fail('outil inconnu sur le téléphone');
+  if (t.level !== 'read') return fail('validation pas encore disponible');
+  if (!flipper.connected) return fail('Flipper non connecté au téléphone');
+  try {
+    const result = await t.run(args);
+    log('VPS → ' + tool + ' : OK', 'ok');
+    bridge.reply(id, true, result);
+  } catch (e) {
+    fail(e && e.message ? e.message : String(e));
+  }
+}
+
+function sendState() {
+  bridge.send({
+    type: 'state',
+    state: { flipper: { connected: flipper.connected, name: flipper.name, battery: flipper.connected ? battery : null } },
+  });
+}
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return { url: typeof s.url === 'string' && s.url ? s.url : DEFAULT_VPS_URL, token: typeof s.token === 'string' ? s.token : '' };
+  } catch {
+    return { url: DEFAULT_VPS_URL, token: '' };
+  }
+}
+
+function saveSettings(s) {
+  // Le jeton reste dans ce navigateur, sur ce téléphone.
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); return true; } catch { return false; }
+}
+
+bridge.addEventListener('status', (e) => {
+  const st = e.detail;
+  if (st === 'online') { log('VPS connecté.', 'ok'); sendState(); }
+  else if (st === 'refused') log('VPS : jeton refusé. Vérifie le jeton dans « Serveur VPS ».', 'err');
+  else if (st === 'replaced') log('VPS : un autre appareil s\'est connecté avec ce jeton.', 'err');
+  render();
+});
+bridge.addEventListener('call', (e) => { handleCall(e.detail); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bridge.wake(); });
+
+$('vpsSave').addEventListener('click', () => {
+  const url = $('vpsUrl').value.trim() || DEFAULT_VPS_URL;
+  const token = $('vpsToken').value.trim();
+  if (!/^wss:\/\//.test(url)) { log('L\'adresse du VPS doit commencer par wss://', 'err'); return; }
+  if (!saveSettings({ url, token })) log('Réglages non mémorisés (stockage indisponible) : valables jusqu\'à la fermeture.', 'err');
+  bridge.configure(url, token);
+  log(token ? 'Réglages VPS enregistrés.' : 'Jeton vide : pont VPS désactivé.');
+});
+
+{
+  const s = loadSettings();
+  $('vpsUrl').value = s.url;
+  $('vpsToken').value = s.token;
+  bridge.configure(s.url, s.token);
 }
 
 // ---------- Divers ----------

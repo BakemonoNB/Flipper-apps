@@ -14,7 +14,9 @@ Apps et scripts pour Flipper Zero.
 - `docs/` : pages web pour le téléphone, à ouvrir dans Bluefy (iOS) :
   - `docs/app/` : l'app (écran du Flipper en direct + boutons). `flipper.js` = client Bluetooth + RPC.
   - `docs/ble-test/` : test de connexion et ping RPC.
-- `server/` : pont VPS ↔ téléphone (Node 24, sans dépendance). `node index.js` ; `node --test` pour les tests. Variables : `PORT`, `HOST`, `LOGS_TOKEN`.
+- `server/` : pont VPS ↔ téléphone (Node 24, sans dépendance). `node index.js` ; `node --test` pour les tests.
+  - Variables : `PORT`, `HOST`, `PHONE_TOKEN` (app téléphone, WebSocket `/ws`), `API_TOKEN` (appelants de `/api/*` et `/logs`), `LOGS_TOKEN` (`/logs`).
+  - API : `GET /api/status`, `POST /api/call {tool, args}` → relayé au téléphone, qui décide du niveau de l'outil et de la validation.
 
 ## Déploiement
 

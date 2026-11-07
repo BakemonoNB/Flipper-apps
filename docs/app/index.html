@@ -20,8 +20,15 @@
     padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
   }
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .status { flex: 1; color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .statuses { flex: 1; min-width: 0; }
+  .status { color: var(--muted); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status.small { font-size: 13px; font-weight: 500; }
   .status.on { color: var(--ok); }
+  .status.bad { color: var(--err); }
+  details + details { margin-top: 10px; }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 4px; }
+  input { width: 100%; font: 16px/1.3 ui-monospace, Menlo, monospace; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+  #vpsSave { margin-top: 12px; width: 100%; }
   button { font: inherit; color: inherit; border-radius: 12px; border: 1px solid var(--border); background: var(--card); padding: 10px 16px; }
   button:disabled { opacity: .4; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
@@ -47,7 +54,10 @@
 </head>
 <body>
 <header>
-  <div id="status" class="status">Déconnecté</div>
+  <div class="statuses">
+    <div id="status" class="status">Flipper déconnecté</div>
+    <div id="vpsStatus" class="status small">VPS : non configuré</div>
+  </div>
   <button id="main" class="primary">Connecter</button>
 </header>
 
@@ -73,6 +83,14 @@
   <summary>Journal</summary>
   <div id="log"></div>
   <button id="copy">Copier le journal</button>
+</details>
+<details>
+  <summary>Serveur VPS</summary>
+  <label for="vpsUrl">Adresse</label>
+  <input id="vpsUrl" type="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <label for="vpsToken">Jeton du téléphone</label>
+  <input id="vpsToken" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+  <button id="vpsSave">Enregistrer et connecter</button>
 </details>
 <button id="other" class="link">Choisir dans la liste complète des appareils</button>
 
