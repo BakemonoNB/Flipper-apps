@@ -73,9 +73,17 @@ Réponses :
 - Image : `docker build -t flipper-builder /opt/flipper-builder/builder`.
 - Unités dans `deploy/` : `flipper-builder.service` (dans `/etc/systemd/system/`),
   `flipper-builder-deploy.sh` (dans `/usr/local/bin/`), `flipper-builder-deploy.service` et `.timer`.
-- Le timer (toutes les 5 min, en root) fait `git fetch`, reconstruit l'image si `Dockerfile` ou `entrypoint.sh`
-  ont changé (avant le reset : en cas d'échec, il réessaie au passage suivant), `git reset --hard origin/main`,
-  puis redémarre `flipper-builder` seulement si `builder/` a changé.
+- **Mise à jour : à la main uniquement, quand Mikha le demande** (règle du 2026-11-08). Le builder tourne en root :
+  un déploiement automatique depuis GitHub donnerait root sur le VPS à quiconque peut pousser sur `main`
+  (compte GitHub, sessions Claude cloud, jeton qui fuiterait). `flipper-builder-deploy.timer` est donc
+  **désactivé** (fichiers conservés, ne pas le réactiver).
+- Procédure de mise à jour :
+  1. `git -C /opt/flipper-builder fetch origin` puis montrer à Mikha
+     `git -C /opt/flipper-builder diff HEAD origin/main -- builder/` (commit déployé contre origin/main).
+  2. Attendre son accord explicite sur ce diff.
+  3. Seulement ensuite : reconstruire l'image si `Dockerfile` ou `entrypoint.sh` ont changé,
+     `git -C /opt/flipper-builder reset --hard origin/main`, puis `systemctl restart flipper-builder`
+     et vérifier `curl -s 127.0.0.1:3050/health`.
 - Le script de déploiement et les unités systemd ne sont pas mis à jour automatiquement : les réinstaller à la main.
 
 ## Tests
