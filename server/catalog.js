@@ -21,7 +21,12 @@ export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone
       }
       return Buffer.from(await res.arrayBuffer());
     }
-    if (!res.ok) throw new Error('catalogue : HTTP ' + res.status);
+    if (!res.ok) {
+      // Le détail renvoyé par le catalogue dit quel paramètre est refusé : on le garde pour le diagnostic.
+      let detail = '';
+      try { detail = JSON.stringify(JSON.parse(await res.text()).detail ?? '').slice(0, 200); } catch { /* corps non JSON */ }
+      throw new Error('catalogue : HTTP ' + res.status + (detail && detail !== '""' ? ' ' + detail : ''));
+    }
     return res.json();
   }
 
@@ -49,10 +54,12 @@ export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone
     let list, catMap;
     try {
       [list, catMap] = await Promise.all([
+        // Mêmes paramètres que lab.flipper.net : is_latest_release_version n'est JAMAIS envoyé avec api/target
+        // (refus HTTP 400), et le tri est toujours précisé (updated_at ; « downloads » n'existe pas).
         get('/0/application', {
-          target, api, is_latest_release_version: true,
+          target, api,
           query, category_id: typeof args.category_id === 'string' ? args.category_id : undefined,
-          limit: 20, sort_by: query ? undefined : 'downloads', sort_order: query ? undefined : -1,
+          limit: 20, offset: 0, sort_by: 'updated_at', sort_order: -1,
         }),
         categories(),
       ]);
@@ -82,7 +89,7 @@ export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone
     let app, catMap;
     try {
       [app, catMap] = await Promise.all([
-        get('/application/' + encodeURIComponent(id), { target, api, is_latest_release_version: true }),
+        get('/application/' + encodeURIComponent(id), { target, api }),
         categories(),
       ]);
     } catch (e) {
