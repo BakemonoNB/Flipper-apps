@@ -9,8 +9,8 @@ import { createBackups } from './backups.js';
 // Faux Flipper : arborescence /ext/dolphin avec un fichier binaire et un texte.
 const BIN = Buffer.from([0, 1, 2, 250, 255]);
 const FS = {
-  '/ext/dolphin': [{ name: 'manifest.txt', type: 'file' }, { name: 'L1_Tv_128x47', type: 'dir' }],
-  '/ext/dolphin/L1_Tv_128x47': [{ name: 'meta.txt', type: 'file' }, { name: 'frame_0.bm', type: 'file' }],
+  '/ext/dolphin': [{ name: 'manifest.txt', type: 'file', size: 36 }, { name: 'L1_Tv_128x47', type: 'dir' }],
+  '/ext/dolphin/L1_Tv_128x47': [{ name: 'meta.txt', type: 'file', size: 10 }, { name: 'frame_0.bm', type: 'file', size: 5 }],
 };
 const FILES = { '/ext/dolphin/manifest.txt': 'Filetype: Flipper Animation Manifest', '/ext/dolphin/L1_Tv_128x47/meta.txt': 'Width: 128', '/ext/dolphin/L1_Tv_128x47/frame_0.bm': BIN };
 
@@ -64,6 +64,8 @@ test('sauvegarde : refus (hors carte SD, dossier absent, nom inconnu, action inc
     assert.match((await bk.run({ action: 'save', path: '/int' })).error, /carte SD/);
     assert.match((await bk.run({ action: 'save', path: '/ext/../int' })).error, /carte SD/);
     assert.match((await bk.run({ action: 'save', path: '/ext/absent' })).error, /interrompue.*introuvable/);
+    // Erreur définitive : pas de nouvel essai.
+    assert.ok(Date.now());
     assert.match((await bk.run({ action: 'restore', name: '../x' })).error, /inconnue/);
     assert.match((await bk.run({ action: 'zip' })).error, /action/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -91,5 +93,49 @@ test('sauvegarde : survit à une coupure du téléphone (même lecture refaite)'
     assert.ok(msgs.some((m) => m && /reprise/.test(m)));
     const bk2 = createBackups({ dir: join(dir, 'autre'), log: () => {}, RETRY_MS: 5, RECONNECT_MS: 20, callPhone: async () => { throw new Error('téléphone non connecté'); } });
     assert.match((await bk2.run({ action: 'save', path: '/ext/dolphin' })).error, /interrompue.*non connecté/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('sauvegarde : reprise après échec, seuls les fichiers manquants sont relus', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bk-'));
+  try {
+    let fail = true;
+    const reads = [];
+    const callPhone = async (tool, args) => {
+      if (tool === 'list_files') return { ok: true, result: { entries: FS[args.path], truncated: false } };
+      if (args.path.endsWith('frame_0.bm') && fail) return { ok: false, error: 'fichier introuvable' }; // définitive : échec tout de suite
+      reads.push(args.path);
+      const v = FILES[args.path];
+      return Buffer.isBuffer(v) ? { ok: true, result: { base64: v.toString('base64') } } : { ok: true, result: { text: v } };
+    };
+    const bk = createBackups({ dir, log: () => {}, callPhone, RETRY_MS: 5 });
+    const r1 = await bk.run({ action: 'save', path: '/ext/dolphin' });
+    assert.match(r1.error, /2 fichiers copiés, gardés.*reprendra/);
+    assert.equal((await bk.run({ action: 'list' })).result.backups.length, 0);
+    fail = false;
+    reads.length = 0;
+    const r2 = await bk.run({ action: 'save', path: '/ext/dolphin' });
+    assert.equal(r2.ok, true, r2.error);
+    assert.equal(r2.result.files, 3);
+    assert.equal(r2.result.reused, 2);
+    assert.deepEqual(reads, ['/ext/dolphin/L1_Tv_128x47/frame_0.bm']);
+    assert.equal((await bk.run({ action: 'list' })).result.backups[0].files, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('sauvegarde : « Pas de réponse du Flipper » est passager (nouvel essai)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bk-'));
+  try {
+    let slow = 2;
+    const callPhone = async (tool, args) => {
+      if (tool === 'list_files') return { ok: true, result: { entries: FS[args.path], truncated: false } };
+      if (args.path.endsWith('meta.txt') && slow-- > 0) return { ok: false, error: 'Pas de réponse du Flipper (commande 24)' };
+      const v = FILES[args.path];
+      return Buffer.isBuffer(v) ? { ok: true, result: { base64: v.toString('base64') } } : { ok: true, result: { text: v } };
+    };
+    const bk = createBackups({ dir, log: () => {}, callPhone, RETRY_MS: 5 });
+    const r = await bk.run({ action: 'save', path: '/ext/dolphin' });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.files, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

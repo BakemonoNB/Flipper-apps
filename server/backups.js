@@ -3,7 +3,7 @@
 // un seul outil restore_files côté téléphone (une validation pour tout le lot), qui télécharge les fichiers
 // depuis /bk/<tâche>/<chemin> (adresse aléatoire, 3 h).
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const MAX_FILES = 3000;
@@ -14,6 +14,7 @@ const BACKUP_NAME = /^[A-Za-z0-9._-]{1,80}$/;
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 // Segment de nom de fichier du Flipper accepté (FAT) : ni « / », ni « .. », ni caractère de contrôle.
 const segOk = (s) => typeof s === 'string' && s.length > 0 && s.length <= 128 && s !== '.' && s !== '..' && !/[\u0000-\u001f/\\]/.test(s);
+const DEFINITIVE = /introuvable|trop gros|c'est un dossier|refusé par Mikha|invalide|interdit|seule la carte SD|outil inconnu/;
 const relOk = (rel) => typeof rel === 'string' && rel.split('/').every(segOk);
 
 // progress(texte, pourcentage | null) : affiché sur le téléphone pendant une sauvegarde (null, null : fin).
@@ -37,13 +38,12 @@ export function createBackups({ dir, log, callPhone, progress = () => {}, now = 
       }
       if (!r || r.ok === false) {
         const err = (r && r.error) || 'échec';
-        // Le Flipper a décroché du téléphone (Bluetooth) : même attente.
-        if (/Flipper non connecté|déconnecté/.test(err) && Date.now() <= until) {
-          progress('Flipper déconnecté : reprise dès sa reconnexion…', null);
-          await new Promise((s) => setTimeout(s, RETRY_MS));
-          continue;
-        }
-        throw new Error(tool + ' ' + (args.path || '') + ' : ' + err);
+        // Erreurs définitives : inutile de refaire. Les autres (Flipper qui ne répond pas à temps, Bluetooth
+        // décroché, app rechargée) sont passagères : même attente, même lecture.
+        if (DEFINITIVE.test(err) || Date.now() > until) throw new Error(tool + ' ' + (args.path || '') + ' : ' + err);
+        progress('Le Flipper ne répond pas (' + err.slice(0, 60) + ') : nouvel essai…', null);
+        await new Promise((s) => setTimeout(s, RETRY_MS));
+        continue;
       }
       return r.result;
     }
@@ -52,11 +52,12 @@ export function createBackups({ dir, log, callPhone, progress = () => {}, now = 
   async function save(a, origin) {
     const src = typeof a.path === 'string' ? a.path.replace(/\/+$/, '') : '';
     if (!/^\/ext(\/|$)/i.test(src) || !src.split('/').slice(1).every(segOk)) return { ok: false, error: 'path : un dossier de la carte SD, ex. /ext/dolphin' };
-    const stamp = now().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    const name = (src.split('/').filter(Boolean).slice(1).join('_') || 'sd').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 50) + '-' + stamp;
-    const root = join(dir, name);
-    if (existsSync(root)) return { ok: false, error: 'une sauvegarde du même nom existe déjà (attends une minute)' };
+    const slug = (src.split('/').filter(Boolean).slice(1).join('_') || 'sd').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 50);
+    // Copie en cours dans <slug>.partial : gardée si la sauvegarde échoue, et reprise au prochain essai
+    // (un fichier déjà copié avec la même taille n'est pas relu).
+    const root = join(dir, slug + '.partial');
     const files = [];
+    let reused = 0;
     let total = 0;
     const queue = [{ path: src, rel: '', depth: 0 }];
     let lastTick = 0;
@@ -76,28 +77,38 @@ export function createBackups({ dir, log, callPhone, progress = () => {}, now = 
             continue;
           }
           if (files.length >= MAX_FILES) throw new Error('plus de ' + MAX_FILES + ' fichiers');
-          const r = await phone('read_file', { path }, origin);
-          const data = typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : Buffer.from(String(r.text ?? ''), 'utf8');
+          const abs = join(root, 'files', ...rel.split('/'));
+          let data;
+          if (Number.isInteger(e.size) && existsSync(abs) && statSync(abs).size === e.size) {
+            data = readFileSync(abs);
+            reused++;
+          } else {
+            const r = await phone('read_file', { path }, origin);
+            data = typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : Buffer.from(String(r.text ?? ''), 'utf8');
+            mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
+            writeFileSync(abs, data, { mode: 0o600 });
+          }
           total += data.length;
           if (total > MAX_TOTAL) throw new Error('plus de ' + MAX_TOTAL / 1048576 + ' Mo');
-          const abs = join(root, 'files', ...rel.split('/'));
-          mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
-          writeFileSync(abs, data, { mode: 0o600 });
           files.push({ path: rel, size: data.length, sha256: sha256(data) });
           if (Date.now() - lastTick > 1000) { lastTick = Date.now(); progress('Sauvegarde de ' + src + ' : ' + files.length + ' fichiers lus', null); }
         }
       }
     } catch (e) {
       progress(null, null);
-      rmSync(root, { recursive: true, force: true }); // pas de sauvegarde à moitié faite
-      return { ok: false, error: 'sauvegarde interrompue (' + files.length + ' fichiers lus) : ' + e.message };
+      return { ok: false, error: 'sauvegarde interrompue (' + files.length + ' fichiers copiés, gardés) : ' + e.message
+        + '. Relance backup action=save avec le même path : elle reprendra là où elle s\'est arrêtée.' };
     }
     progress(null, null);
+    const stamp = now().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    let name = slug + '-' + stamp;
+    for (let i = 2; existsSync(join(dir, name)); i++) name = slug + '-' + stamp + '-' + i;
+    mkdirSync(join(root, 'files'), { recursive: true, mode: 0o700 });
+    renameSync(root, join(dir, name));
     const manifest = { name, source: src, created: now().toISOString(), files };
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 1), { mode: 0o600 });
-    log('INFO', 'sauvegarde ' + name + ' : ' + files.length + ' fichiers, ' + total + ' octets');
-    return { ok: true, result: { name, source: src, files: files.length, bytes: total, hint: 'backup action=restore name=' + name + ' pour la remettre' } };
+    writeFileSync(join(dir, name, 'manifest.json'), JSON.stringify(manifest, null, 1), { mode: 0o600 });
+    log('INFO', 'sauvegarde ' + name + ' : ' + files.length + ' fichiers (' + reused + ' repris d\'un essai précédent), ' + total + ' octets');
+    return { ok: true, result: { name, source: src, files: files.length, reused: reused || undefined, bytes: total, hint: 'backup action=restore name=' + name + ' pour la remettre' } };
   }
 
   function manifestOf(name) {
