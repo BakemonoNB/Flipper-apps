@@ -31,16 +31,19 @@
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; line-height: 1.4;
-    padding-bottom: calc(var(--tabbar-h) + var(--safe-b) + var(--composer-h, 0px) + 12px);
+    /* Place réservée en bas : onglets (ou clavier pendant la frappe) + zone de saisie. */
+    --bottom-space: calc(var(--tabbar-h) + var(--safe-b));
   }
+  /* Pendant la frappe : onglets et ligne du haut masqués, la saisie colle au clavier. */
+  body.typing { --bottom-space: var(--kb, 0px); }
+  body.typing .tabbar, body.typing .topbar { display: none; }
   /* Toujours un peu plus haut que l'écran : on peut toujours glisser pour passer en plein écran. */
   .app { width: 100%; max-width: 560px; margin: 0 auto; padding: 0 16px; min-height: calc(100lvh + 2px); }
-  .head { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 0 -16px; padding: max(10px, env(safe-area-inset-top)) 16px 10px; }
-  #scroller { position: relative; }
+  .head { position: sticky; top: var(--vv-top, 0px); z-index: 6; background: var(--bg); margin: 0 -16px; padding: max(10px, env(safe-area-inset-top)) 16px 10px; }
+  #scroller { position: relative; padding-bottom: calc(var(--bottom-space) + var(--composer-h, 0px) + 12px); }
   .composer-bar { display: none; position: fixed; z-index: 9; left: 0; right: 0; margin: 0 auto; max-width: 560px;
-    bottom: calc(var(--tabbar-h) + var(--safe-b)); padding: 6px 16px 8px;
+    bottom: var(--bottom-space); padding: 6px 16px 8px;
     background: linear-gradient(to bottom, transparent, var(--bg) 18%); }
-  body.kb-open .composer-bar { bottom: var(--kb, 0px); }
   .chat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: .85em; }
   .chat-top .btn.small { min-height: 36px; }
   .chat-top .btn svg { width: 16px; height: 16px; }

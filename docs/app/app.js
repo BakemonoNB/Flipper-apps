@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v4 (une main)';
+const APP_VERSION = '2026-11-08 · v5 (clavier)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -758,16 +758,50 @@ window.addEventListener('scroll', () => { if (nearBottom()) $('toBottom').hidden
 $('toBottom').addEventListener('click', scrollChat);
 
 // Zone de saisie : sa hauteur réserve la place en bas de page, et elle remonte au-dessus du clavier iOS.
+// Pendant la frappe (body.typing) : onglets et ligne du haut masqués pour rendre la place aux messages.
 {
   const vv = window.visualViewport;
   const root = document.documentElement.style;
+  const text = $('chatText');
+  const typing = () => document.body.classList.contains('typing');
   const fit = () => {
     const bar = document.querySelector('.composer-bar');
     root.setProperty('--composer-h', (currentTab === 'chat' && bar ? bar.offsetHeight : 0) + 'px');
-    const kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+    // Navigateurs qui ne réduisent pas la page sous le clavier (Safari) : on suit la partie visible.
+    const kb = vv && typing() ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
     root.setProperty('--kb', kb + 'px');
-    document.body.classList.toggle('kb-open', kb > 80);
+    root.setProperty('--vv-top', (vv && typing() ? Math.max(0, Math.round(vv.offsetTop)) : 0) + 'px');
   };
+  // Mesures réelles dans le Journal (les 3 premières fois) : Bluefy n'est pas reproductible ici.
+  let measures = 0;
+  const measure = (tag) => {
+    const v = vv ? Math.round(vv.width) + '×' + Math.round(vv.height) + ' décalée de ' + Math.round(vv.offsetTop) : 'inconnue';
+    log('Écran ' + tag + ' : fenêtre ' + innerWidth + '×' + innerHeight + ', partie visible ' + v
+      + ', page ' + document.documentElement.clientHeight + ', téléphone ' + screen.width + '×' + screen.height
+      + ', défilement ' + Math.round(scrollY));
+  };
+  let leaveTimer = 0;
+  text.addEventListener('focus', () => {
+    clearTimeout(leaveTimer);
+    const wasNear = nearBottom();
+    if (measures < 3) measure('avant clavier');
+    document.body.classList.add('typing');
+    fit();
+    requestAnimationFrame(() => { if (wasNear) scrollChat(); });
+    // Le clavier finit de monter en ~0,3 s : on recale, puis on mesure.
+    setTimeout(() => { fit(); if (wasNear) scrollChat(); if (measures < 3) { measures++; measure('clavier ouvert'); } }, 600);
+  });
+  text.addEventListener('blur', () => {
+    // Petit délai : un tap sur « Envoyer » doit toucher le bouton avant que la mise en page ne bouge.
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => {
+      if (document.activeElement === text) return;
+      const wasNear = nearBottom();
+      document.body.classList.remove('typing');
+      fit();
+      requestAnimationFrame(() => { if (wasNear && currentTab === 'chat') scrollChat(); });
+    }, 150);
+  });
   fit();
   if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
   addEventListener('resize', fit);
