@@ -61,6 +61,7 @@ function selectTab(name, { focus = false } = {}) {
   }
   if (focus) $('tab-' + name).focus();
   if (name === 'chat') { chatUnread = 0; renderBadge(); requestAnimationFrame(() => scrollChat()); }
+  else scroller.scrollTop = 0;
   store.set(TAB_KEY, name);
 }
 
@@ -653,9 +654,32 @@ function chatControls() {
   $('chatText').placeholder = online ? 'Demande au modèle…' : 'VPS non connecté';
 }
 
+// ---------- Défilement ----------
+// La coque est fixe : seul #scroller défile. On ne ramène en bas que si on y était déjà.
+const scroller = $('scroller');
+const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90;
 function scrollChat() {
-  const last = $('chatLog').lastElementChild;
-  if (last) last.scrollIntoView({ block: 'end' });
+  scroller.scrollTop = scroller.scrollHeight;
+  $('toBottom').hidden = true;
+}
+function followChat(wasNear) {
+  if (currentTab !== 'chat') return;
+  if (wasNear) scrollChat();
+  else $('toBottom').hidden = false;
+}
+scroller.addEventListener('scroll', () => { if (nearBottom()) $('toBottom').hidden = true; }, { passive: true });
+$('toBottom').addEventListener('click', scrollChat);
+
+// Hauteur de la coque = partie réellement visible (le clavier iOS ne recouvre plus la saisie).
+{
+  const vv = window.visualViewport;
+  const fit = () => {
+    document.documentElement.style.setProperty('--app-h', Math.round(vv ? vv.height : innerHeight) + 'px');
+    if (window.scrollY) window.scrollTo(0, 0);
+  };
+  fit();
+  if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
+  addEventListener('resize', fit);
 }
 
 // Markdown minimal et sûr (aucun HTML du modèle n'est interprété) : gras, `code`, blocs de code, listes, titres.
@@ -789,7 +813,6 @@ function renderChat() {
     w.innerHTML = '<i></i><i></i><i></i>';
     box.appendChild(w);
   }
-  if (currentTab === 'chat') scrollChat();
   chatControls();
 }
 
@@ -837,10 +860,22 @@ bridge.addEventListener('message', (e) => {
   } else if (m.type === 'chat_history') {
     if (chat.live && chat.live.model === m.model) return; // réponse en cours : on garde l'affichage local
     chat.histories[m.model] = (m.items || []).map((it) => ({ role: it.role, text: it.text }));
-    if (m.model === chat.current) renderChat();
+    if (m.model === chat.current) { renderChat(); if (currentTab === 'chat') scrollChat(); }
   } else if (m.type === 'chat_event') {
-    if (m.event === 'text') pushChat(m.model, 'assistant', m.text || '');
-    else if (m.event === 'tool') {
+    const wasNear = nearBottom();
+    if (m.event === 'text') {
+      pushChat(m.model, 'assistant', m.text || '');
+      // Pendant l'écriture, on ne redessine que la dernière bulle (pas toute la conversation).
+      const h = chat.histories[m.model];
+      const last = h[h.length - 1];
+      const bubble = m.model === chat.current ? $('chatLog').lastElementChild : null;
+      if (bubble && bubble.classList.contains('msg') && bubble.classList.contains('assistant') && last.live) {
+        bubble.textContent = '';
+        renderMarkdown(bubble, last.text);
+        followChat(wasNear);
+        return;
+      }
+    } else if (m.event === 'tool') {
       pushChat(m.model, 'tool', m.tool + ' ' + JSON.stringify(m.args || {}));
       log((ORIGINS[m.model] || m.model) + ' utilise ' + m.tool);
     } else if (m.event === 'error') {
@@ -852,7 +887,7 @@ bridge.addEventListener('message', (e) => {
       announce(m.event === 'done' ? 'Réponse de ' + (ORIGINS[m.model] || m.model) + ' reçue' : 'Erreur du modèle');
       if (currentTab !== 'chat') { chatUnread++; renderBadge(); }
     }
-    if (m.model === chat.current) renderChat();
+    if (m.model === chat.current) { renderChat(); followChat(wasNear); }
     else chatControls();
   }
 });
@@ -871,6 +906,7 @@ function sendChat() {
   $('chatText').value = '';
   autoGrow();
   renderChat();
+  scrollChat();
 }
 
 function autoGrow() {
