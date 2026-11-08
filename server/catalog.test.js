@@ -9,7 +9,7 @@ const fake = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   reqs.push(u.pathname + '?' + u.searchParams.toString());
   const json = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-  if (u.pathname === '/category') return json([{ id: 'c1', name: 'Sub-GHz' }, { id: 'c2', name: 'Tools' }]);
+  if (u.pathname === '/category') return json([{ _id: 'c1', name: 'Sub-GHz' }, { _id: 'c2', name: 'Tools' }]);
   if (u.pathname === '/0/application') {
     assert.equal(u.searchParams.get('target'), 'f7');
     assert.equal(u.searchParams.get('api'), '88.2');
@@ -17,13 +17,13 @@ const fake = http.createServer((req, res) => {
     if (u.searchParams.has('is_latest_release_version')) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ detail: 'is_latest_release_version avec api' })); }
     assert.equal(u.searchParams.get('sort_by'), 'updated_at');
     return json([
-      { id: 'a1', alias: 'marauder', author: 'me', category_id: 'c1', current_version: { id: 'v1', name: 'WiFi Marauder', version: '1.2', short_description: 'scan wifi', current_build: { id: 'b1', sdk: { api: '88.2' } } } },
-      { id: 'a2', alias: 'oldapp', author: 'x', category_id: 'c2', current_version: { id: 'v2', name: 'Old', version: '0.1', current_build: null } },
+      { _id: 'a1', alias: 'marauder', author: 'me', category_id: 'c1', current_version: { _id: 'v1', name: 'WiFi Marauder', version: '1.2', short_description: 'scan wifi', current_build: { _id: 'b1', sdk: { api: '88.2' } } } },
+      { _id: 'a2', alias: 'oldapp', author: 'x', category_id: 'c2', current_version: { _id: 'v2', name: 'Old', version: '0.1', current_build: null } },
     ]);
   }
   if (u.pathname.startsWith('/application/a') && u.searchParams.has('is_latest_release_version')) { res.writeHead(400); return res.end('{}'); }
-  if (u.pathname === '/application/a1') return json({ id: 'a1', alias: 'marauder', author: 'me', category_id: 'c1', current_version: { id: 'v1', name: 'WiFi Marauder', version: '1.2', current_build: { id: 'b1', sdk: { api: '88.2' } } } });
-  if (u.pathname === '/application/a2') return json({ id: 'a2', alias: 'oldapp', author: 'x', category_id: 'c2', current_version: { id: 'v2', name: 'Old', current_build: null } });
+  if (u.pathname === '/application/a1') return json({ _id: 'a1', alias: 'marauder', author: 'me', category_id: 'c1', current_version: { _id: 'v1', name: 'WiFi Marauder', version: '1.2', current_build: { _id: 'b1', sdk: { api: '88.2' } } } });
+  if (u.pathname === '/application/a2') return json({ _id: 'a2', alias: 'oldapp', author: 'x', category_id: 'c2', current_version: { _id: 'v2', name: 'Old', current_build: null } });
   if (u.pathname === '/application/version/v1/build/compatible') { res.writeHead(200, { 'content-type': 'application/octet-stream' }); return res.end(fap); }
   if (u.pathname === '/application/version/v2/build/compatible') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ detail: { code: 404 } })); }
   res.writeHead(404); res.end('{}');
