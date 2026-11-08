@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v5 (clavier)';
+const APP_VERSION = '2026-11-08 · v6 (clavier 2)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -763,13 +763,13 @@ $('toBottom').addEventListener('click', scrollChat);
   const vv = window.visualViewport;
   const root = document.documentElement.style;
   const text = $('chatText');
-  const typing = () => document.body.classList.contains('typing');
+  // Classe « composing » (pas « typing » : déjà prise par la bulle « le modèle écrit »).
+  const typing = () => document.body.classList.contains('composing');
   const fit = () => {
     const bar = document.querySelector('.composer-bar');
     root.setProperty('--composer-h', (currentTab === 'chat' && bar ? bar.offsetHeight : 0) + 'px');
-    // Navigateurs qui ne réduisent pas la page sous le clavier (Safari) : on suit la partie visible.
-    const kb = vv && typing() ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
-    root.setProperty('--kb', kb + 'px');
+    // Clavier ouvert : si iOS décale la partie visible sous le haut de la page, l'en-tête collé la suit.
+    // (La saisie, elle, n'est plus positionnée en JS : elle est dans le flux pendant la frappe.)
     root.setProperty('--vv-top', (vv && typing() ? Math.max(0, Math.round(vv.offsetTop)) : 0) + 'px');
   };
   // Mesures réelles dans le Journal (les 3 premières fois) : Bluefy n'est pas reproductible ici.
@@ -778,18 +778,30 @@ $('toBottom').addEventListener('click', scrollChat);
     const v = vv ? Math.round(vv.width) + '×' + Math.round(vv.height) + ' décalée de ' + Math.round(vv.offsetTop) : 'inconnue';
     log('Écran ' + tag + ' : fenêtre ' + innerWidth + '×' + innerHeight + ', partie visible ' + v
       + ', page ' + document.documentElement.clientHeight + ', téléphone ' + screen.width + '×' + screen.height
-      + ', défilement ' + Math.round(scrollY));
+      + ', défilement ' + Math.round(scrollY) + ' / page ' + document.documentElement.scrollHeight
+      + ', saisie ' + Math.round(document.querySelector('.composer-bar').getBoundingClientRect().top) + '→'
+      + Math.round(document.querySelector('.composer-bar').getBoundingClientRect().bottom));
   };
   let leaveTimer = 0;
   text.addEventListener('focus', () => {
     clearTimeout(leaveTimer);
     const wasNear = nearBottom();
     if (measures < 3) measure('avant clavier');
-    document.body.classList.add('typing');
+    document.body.classList.add('composing');
     fit();
-    requestAnimationFrame(() => { if (wasNear) scrollChat(); });
-    // Le clavier finit de monter en ~0,3 s : on recale, puis on mesure.
-    setTimeout(() => { fit(); if (wasNear) scrollChat(); if (measures < 3) { measures++; measure('clavier ouvert'); } }, 600);
+    // Avant que le clavier monte : bas de page (la saisie est maintenant le dernier élément). Ensuite iOS
+    // fait défiler lui-même jusqu'au champ ; on ne refait pas défiler pendant (sinon les deux se battent).
+    if (wasNear) scrollChat();
+    // Filet de sécurité, une seule fois après l'animation du clavier : si la saisie n'est pas visible, on y va.
+    setTimeout(() => {
+      fit();
+      if (typing() && vv) {
+        const r = document.querySelector('.composer-bar').getBoundingClientRect();
+        const below = r.bottom - vv.offsetTop - vv.height;
+        if (below > 2 || r.top - vv.offsetTop < 0) window.scrollBy(0, below);
+      }
+      if (measures < 3) { measures++; measure('clavier ouvert'); }
+    }, 700);
   });
   text.addEventListener('blur', () => {
     // Petit délai : un tap sur « Envoyer » doit toucher le bouton avant que la mise en page ne bouge.
@@ -797,7 +809,7 @@ $('toBottom').addEventListener('click', scrollChat);
     leaveTimer = setTimeout(() => {
       if (document.activeElement === text) return;
       const wasNear = nearBottom();
-      document.body.classList.remove('typing');
+      document.body.classList.remove('composing');
       fit();
       requestAnimationFrame(() => { if (wasNear && currentTab === 'chat') scrollChat(); });
     }, 150);
