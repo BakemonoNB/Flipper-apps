@@ -63,6 +63,10 @@ function selectTab(name, { focus = false } = {}) {
   if (focus) $('tab-' + name).focus();
   if (name === 'chat') { chatUnread = 0; renderBadge(); requestAnimationFrame(() => scrollChat()); }
   else scroller.scrollTop = 0;
+  // En quittant Apprendre, revenir à la liste (le détail ne doit pas rester ouvert au retour).
+  if (name !== 'learn' && typeof $('learnDetail') !== 'undefined' && !$('learnDetail').hidden) {
+    $('learnDetail').hidden = true; $('learnList').hidden = false; renderLearn();
+  }
   store.set(TAB_KEY, name);
 }
 
@@ -1066,10 +1070,24 @@ function openModule(id) {
   const ol = $('ldSteps');
   ol.textContent = '';
   for (const s of m.steps) { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); }
+  $('ldHardware').hidden = !m.needsEsp32;
+  $('ldHardware').textContent = m.needsEsp32 ? 'Nécessite une carte ESP32 (Marauder) branchée sur le Flipper. Le Flipper seul ne fait pas de Wi-Fi.' : '';
+  const pairsBox = $('ldPairs');
+  pairsBox.textContent = '';
+  for (const pr of m.pairs || []) {
+    const d = document.createElement('div'); d.className = 'pair';
+    const a = document.createElement('div'); a.className = 'atk'; a.textContent = pr.attack;
+    const how = document.createElement('p'); how.className = 'how'; how.textContent = pr.how;
+    const def = document.createElement('div'); def.className = 'def';
+    const s = document.createElement('strong'); s.textContent = 'Parade. '; def.append(s, pr.defend);
+    d.append(a, how, def); pairsBox.appendChild(d);
+  }
   $('ldLegal').hidden = !m.legal;
   $('ldLegal').textContent = m.legal || '';
   $('ldOpen').hidden = !m.app;
   $('ldOpen').textContent = 'Ouvrir sur le Flipper';
+  $('ldExplain').textContent = 'Explique mon écran';
+  $('ldExplain').disabled = false;
   renderDone();
   $('learnList').hidden = true;
   $('learnDetail').hidden = false;
@@ -1114,6 +1132,19 @@ $('ldOpen').addEventListener('click', async () => {
   } finally {
     $('ldOpen').disabled = false;
   }
+});
+
+$('ldExplain').addEventListener('click', () => {
+  const m = learnCurrent;
+  selectTab('chat');
+  const claude = document.querySelector('#chatModels input[value="claude"]');
+  if (claude && !chat.live) { claude.checked = true; claude.dispatchEvent(new Event('change')); }
+  const ctx = m ? ' On est dans le module « ' + m.title + ' ».' : '';
+  $('chatText').value = 'Lis l\'écran du Flipper avec get_screen et explique-moi en français simple ce que je vois : '
+    + 'ce que c\'est, ce que chaque ligne signifie, et ce que ça fait.' + ctx + ' N\'appuie sur rien et ne lance rien : explique seulement.';
+  autoGrow();
+  $('chatText').focus();
+  if (!flipper.connected) log('Explique mon écran : connecte d\'abord le Flipper.', 'err');
 });
 
 $('ldCoach').addEventListener('click', () => {

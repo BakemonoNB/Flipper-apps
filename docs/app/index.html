@@ -63,6 +63,13 @@
   .ld-legal { border-left: 4px solid var(--err); background: var(--surface); border-radius: 10px; padding: 10px 12px; font-size: .9em; margin-bottom: 14px; }
   .ld-legal::before { content: 'Légal et sécurité'; display: block; font-weight: 800; color: var(--err); font-size: .8em; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
   .ld-actions { display: grid; gap: 10px; margin-bottom: 16px; }
+  .ld-hardware { background: var(--accent-soft); color: var(--accent-ink); border-radius: 10px; padding: 10px 12px; font-size: .9em; margin: 0 0 14px; }
+  .pair { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow); }
+  .pair .atk { font-weight: 800; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .pair .atk::before { content: '⚔'; }
+  .pair .how { color: var(--muted); font-size: .92em; margin: 0 0 10px; }
+  .pair .def { font-size: .92em; border-left: 3px solid var(--ok); padding-left: 10px; }
+  .pair .def strong { color: var(--ok); }
   body[data-tab="chat"] .composer-bar { display: block; }
   .to-bottom { position: absolute; right: 4px; top: -52px; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
     background: var(--surface); color: var(--fg); box-shadow: var(--shadow); display: grid; place-items: center; cursor: pointer; }
@@ -299,11 +306,14 @@
         </button>
         <h2 id="ldTitle" class="ld-title"></h2>
         <p id="ldWhat" class="ld-what"></p>
+        <p id="ldHardware" class="ld-hardware" hidden></p>
+        <div id="ldPairs"></div>
         <h3 class="ld-h">Exercice</h3>
         <ol id="ldSteps" class="ld-steps"></ol>
         <div id="ldLegal" class="ld-legal" role="note"></div>
         <div class="ld-actions">
-          <button id="ldOpen" class="btn primary">Ouvrir sur le Flipper</button>
+          <button id="ldExplain" class="btn primary">Explique mon écran</button>
+          <button id="ldOpen" class="btn">Ouvrir sur le Flipper</button>
           <button id="ldCoach" class="btn">Me guider avec Claude</button>
           <button id="ldDone" class="btn ghost" aria-pressed="false">Marquer comme fait</button>
         </div>

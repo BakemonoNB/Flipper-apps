@@ -136,3 +136,45 @@ export const MODULES = [
     coach: 'écrire et lancer mon premier script JS',
   },
 ];
+
+// Module Wi-Fi : nécessite une carte ESP32 (Marauder) branchée sur les broches du Flipper.
+// Le Flipper Zero seul ne fait pas de Wi-Fi (sa radio ne couvre pas le 2,4 GHz).
+MODULES.push({
+  id: 'wifi',
+  title: 'Wi-Fi : attaque et défense',
+  icon: '◭',
+  needsEsp32: true,
+  pitch: 'Comprendre les attaques Wi-Fi sur TON réseau, et t\'en protéger.',
+  what: 'Le Flipper Zero ne fait pas de Wi-Fi tout seul : sa radio ne couvre pas le 2,4 GHz. Avec une carte ESP32 (firmware Marauder) branchée sur ses broches, le Flipper devient l\'écran et le clavier de l\'ESP32, qui lui fait le travail Wi-Fi. Chaque attaque ci-dessous est expliquée avec sa parade. À faire uniquement sur un réseau qui t\'appartient.',
+  pairs: [
+    {
+      attack: 'Scan et écoute',
+      how: 'L\'ESP32 passe en revue les canaux 2,4 GHz et liste les points d\'accès autour (nom du réseau, canal, puissance, chiffrement) et les appareils connectés. Rien n\'est envoyé : il ne fait qu\'écouter les trames que le Wi-Fi diffuse en clair (les en-têtes ne sont jamais chiffrés).',
+      defend: 'Tu ne peux pas empêcher qu\'on voie ton réseau, mais : cache le nom (SSID) pour gêner les curieux, et surtout utilise WPA3, ou WPA2 avec un mot de passe long. Le scan révèle le chiffrement : s\'il affiche WEP ou « ouvert », change tout de suite.',
+    },
+    {
+      attack: 'Deauth (déconnexion forcée)',
+      how: 'Le Wi-Fi ancien (avant WPA3) accepte des trames de gestion non authentifiées. Un attaquant envoie à ta box, en se faisant passer pour ton téléphone, une trame « déconnecte-toi » : l\'appareil tombe du réseau. Répété, il n\'arrive plus à rester connecté.',
+      defend: 'WPA3, ou WPA2 avec les « trames de gestion protégées » (PMF/802.11w) activées dans ta box : les deux signent ces trames, et le faux ordre est ignoré. Si des appareils se déconnectent sans raison par vagues, c\'est un signe. (Émettre un deauth vers un réseau qui n\'est pas le tien est illégal.)',
+    },
+    {
+      attack: 'Faux point d\'accès (evil twin)',
+      how: 'L\'attaquant crée un réseau au même nom que le tien, en plus puissant. Ton téléphone, qui retient les réseaux connus, peut s\'y connecter seul. Couplé à un deauth qui te chasse du vrai, tu bascules sur le faux, où tout ton trafic passe par l\'attaquant.',
+      defend: 'Supprime les réseaux publics enregistrés sur ton téléphone, méfie-toi d\'un réseau connu qui redemande le mot de passe, et vérifie le cadenas HTTPS sur les sites sensibles (le faux point d\'accès ne casse pas HTTPS). Un VPN protège le contenu même sur un réseau piégé.',
+    },
+    {
+      attack: 'Capture de la poignée de main WPA',
+      how: 'Quand un appareil se connecte en WPA2, les deux côtés échangent une « poignée de main » (4 messages) qui prouve qu\'ils ont le mot de passe, sans l\'envoyer. L\'attaquant capture cet échange (souvent en forçant une reconnexion par deauth), puis essaie hors ligne des millions de mots de passe jusqu\'à retrouver le tien.',
+      defend: 'Un mot de passe long et aléatoire (plus de 15 caractères) rend cette recherche hors ligne irréalisable. WPA3 supprime carrément cette attaque : la poignée de main ne se laisse plus deviner hors ligne. C\'est la meilleure raison de passer à WPA3.',
+    },
+  ],
+  steps: [
+    'Branche ton ESP32 (Marauder) sur les broches GPIO du Flipper, puis ouvre l\'app GPIO > Pont USB-UART, ou l\'app dédiée si tu en as une.',
+    'Lance un scan des réseaux et repère LE TIEN : note son canal et son chiffrement.',
+    'Appuie sur « Explique mon écran » : Claude te dit ce que chaque ligne signifie.',
+    'Regarde ta box (page d\'admin, souvent 192.168.1.1) : vérifie WPA3 ou WPA2+PMF, et un mot de passe long.',
+    'Pour chaque attaque ci-dessus, relis la parade et applique-la chez toi.',
+  ],
+  legal: 'Uniquement ton propre réseau, celui dont tu paies l\'abonnement. Scanner est en général toléré (tu ne fais qu\'écouter l\'air), mais un deauth, un faux point d\'accès ou une capture de poignée de main visant le réseau d\'un autre est une atteinte à un système de traitement automatisé de données (articles 323-1 et suivants du Code pénal). Le but ici est de sécuriser le tien.',
+  coach: 'comprendre l\'écran de mon ESP32 et sécuriser ma box Wi-Fi',
+});
