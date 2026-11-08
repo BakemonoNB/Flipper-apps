@@ -1,6 +1,6 @@
 # Builder Flipper (.fap)
 
-Compile des apps Flipper Zero (firmware officiel 1.5.1, API 88.2) écrites par des modèles, sans leur faire confiance.
+Compile des apps Flipper Zero (firmware officiel 1.5.1, API 88.2, et Momentum avec une deuxième image) écrites par des modèles, sans leur faire confiance.
 `application.fam` est du Python exécuté par ufbt/SCons : tout build se fait donc dans un conteneur Docker jetable.
 
 ## Architecture
@@ -59,6 +59,25 @@ Réponses :
 | corps JSON de plus de 1 Mo | 413 | `{"ok": false, "log": "..."}` |
 | jeton absent ou faux | 401 | `{"ok": false, "log": "jeton invalide"}` |
 | un build déjà en cours | 429 | `{"ok": false, "log": "..."}` |
+
+## SDK Momentum (deuxième image)
+
+Le pont envoie `"sdk": "official"` ou `"sdk": "momentum"` selon le firmware lu sur le Flipper. Le SDK Momentum
+est une deuxième image construite avec le **même Dockerfile** et d'autres `--build-arg`, déclarée par
+`IMAGE_MOMENTUM=flipper-builder-mntm` dans `/etc/flipper-builder.env`. Sans `IMAGE_MOMENTUM`, une demande
+`momentum` répond `{"ok": false, "log": "[builder] SDK momentum non installé ..."}`.
+
+```sh
+# Valeurs prises dans l'index Momentum (canal release, cible f7, type sdk_zip) :
+#   https://up.momentum-fw.dev/firmware/directory.json   -> url et sha256 du sdk_zip, version (ex. mntm-012)
+# API attendue : 1re ligne « Version » de targets/f7/api_symbols.csv du tag (mntm-012 : 87.1).
+docker build -t flipper-builder-mntm \
+  --build-arg FW_VERSION=mntm-012 --build-arg API_VERSION=87.1 \
+  --build-arg SDK_URL=<url du sdk_zip> --build-arg SDK_SHA256=<sha256 du sdk_zip> \
+  /opt/flipper-builder/builder
+```
+
+`GET /health` ajoute `"momentum": {"firmware": "...", "api": "..."}` quand l'image est déclarée.
 
 ## Limites
 

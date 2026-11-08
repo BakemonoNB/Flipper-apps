@@ -147,6 +147,9 @@
   body:not([data-tab="pad"]) .screen-empty { inset: 8px auto 8px 8px; width: 56%; font-size: .72em; }
   body:not([data-tab="pad"]) .topbar { margin-bottom: 8px; }
   .screen-card { flex: none; }
+  .fw-bar { position: relative; margin-top: 8px; height: 30px; border-radius: 10px; background: var(--surface); border: 1px solid var(--accent); overflow: hidden; }
+  .fw-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); opacity: .35; transition: width .4s; }
+  .fw-text { position: relative; display: block; text-align: center; line-height: 28px; font-size: .78em; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
 
   /* Panneaux */
   .panel { animation: fade .18s ease-out; }
@@ -290,6 +293,7 @@
       </span>
     </div>
   </section>
+  <div id="fwBar" class="fw-bar" role="progressbar" aria-label="Firmware" aria-valuemin="0" aria-valuemax="100" hidden><div class="fw-fill"></div><span class="fw-text"></span></div>
   </div>
 
   <main id="scroller">
@@ -385,7 +389,7 @@
       </div>
       <div class="card">
         <h2 class="panel-title">À propos</h2>
-        <dl class="kv"><dt>App</dt><dd id="aboutApp">—</dd><dt>Serveur</dt><dd id="aboutServer">—</dd><dt>Firmware visé</dt><dd>officiel 1.5.1</dd></dl>
+        <dl class="kv"><dt>App</dt><dd id="aboutApp">—</dd><dt>Serveur</dt><dd id="aboutServer">—</dd><dt>Firmware</dt><dd id="aboutFw">—</dd></dl>
         <div class="row"><button id="updateApp" class="btn">Mettre à jour l'app</button></div>
       </div>
     </section>

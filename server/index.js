@@ -23,6 +23,7 @@ import { createBuilds } from './builds.js';
 import { createMemory } from './memory.js';
 import { createCatalog } from './catalog.js';
 import { createGithub } from './github.js';
+import { createFirmware } from './firmware.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -68,11 +69,20 @@ export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks
 
 // Outils exécutés sur le VPS ; les autres sont relayés au téléphone.
 // install_fap est interne : seul install_app (donc un .fap sorti du builder) peut l'appeler.
-const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+// Firmware du Flipper tel que le téléphone l'a lu à la connexion (null si inconnu).
+const liveFirmware = () => {
+  const ph = bridge.status().phone;
+  const f = ph && ph.state && ph.state.firmware;
+  return f && (f.api || f.version) ? f : null;
+};
+const isMomentum = () => { const f = liveFirmware() || {}; return /momentum/i.test(f.fork || '') || /^mntm/i.test(f.version || ''); };
+const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, sdk: () => (isMomentum() ? 'momentum' : 'official'), callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const memory = createMemory({ brainDir: BRAIN_DIR, log });
-const catalog = createCatalog({ url: CATALOG_URL, target: CATALOG_TARGET, api: FLIPPER_API, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+const catalog = createCatalog({ url: CATALOG_URL, target: CATALOG_TARGET, api: () => (liveFirmware() || {}).api || FLIPPER_API, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const github = createGithub({ build: (a, meta) => builds.build(a, meta), log });
-const INTERNAL_TOOLS = new Set(['install_fap']);
+const firmware = createFirmware({ log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts),
+  indexes: { official: process.env.FW_INDEX_OFFICIAL, momentum: process.env.FW_INDEX_MOMENTUM } });
+const INTERNAL_TOOLS = new Set(['install_fap', 'install_firmware']);
 export async function callTool(name, args, origin) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
   if (name === 'memory_search') return memory.search(a);
@@ -82,6 +92,7 @@ export async function callTool(name, args, origin) {
   if (name === 'install_catalog_app') return catalog.install(a, origin);
   if (name === 'build_app') return builds.build(args);
   if (name === 'github_build') return github.build(a);
+  if (name === 'update_firmware') return firmware.update(a, origin);
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
   return bridge.call(name, args, origin);
@@ -130,6 +141,10 @@ export const chat = createChat({
   log,
   sendToPhone: (obj) => bridge.send(obj),
   callTool: (name, args, origin) => callTool(name, args, origin),
+  contextLine: () => {
+    const f = liveFirmware();
+    return 'Firmware actuel du Flipper : ' + (f ? (f.fork || '?') + ' ' + (f.version || '') + (f.api ? ' (API ' + f.api + ')' : '') : 'inconnu (Flipper pas encore connecté au téléphone)') + '.';
+  },
 });
 hooks.onChat = (msg) => { chat.handle(msg); };
 hooks.onChatReset = (model) => chat.reset(model);
@@ -181,6 +196,9 @@ async function route(req, res) {
     const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '200', 10) || 200, 1), RING_SIZE);
     return send(res, 200, { commit, lines: ring.slice(-n) });
   }
+
+  // Fichiers d'un paquet de firmware préparé (adresse non devinable, valable 3 h) : lus par le téléphone.
+  if ((req.method === 'GET' || req.method === 'OPTIONS') && p.startsWith('/fw/')) return firmware.serve(req, res, p);
 
   if (p.startsWith('/api/')) {
     if (!API_TOKEN) return send(res, 503, { error: 'API_TOKEN non configuré' });

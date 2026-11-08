@@ -1,7 +1,8 @@
 // Builder Flipper : compile des apps .fap dans un conteneur Docker jetable.
 // Tourne en root (pilote Docker), écoute sur 127.0.0.1 seulement.
 // Variables : BUILD_TOKEN (obligatoire), PORT (3050), HOST (127.0.0.1), IMAGE (flipper-builder),
-//   BUILD_TIMEOUT_S (120), DOCKER_BIN (docker).
+//   BUILD_TIMEOUT_S (120), DOCKER_BIN (docker),
+//   IMAGE_MOMENTUM (vide = pas de SDK Momentum) : image construite avec le SDK Momentum (même Dockerfile, autres --build-arg).
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -10,6 +11,8 @@ import { LIMITS, tokenOk, validateFiles, makeTar, readTar, truncateLog } from '.
 const PORT = Number(process.env.PORT || 3050);
 const HOST = process.env.HOST || '127.0.0.1';
 const IMAGE = process.env.IMAGE || 'flipper-builder';
+// Un SDK par firmware : le pont envoie « sdk » selon le firmware lu sur le Flipper.
+const IMAGES = { official: IMAGE, momentum: process.env.IMAGE_MOMENTUM || '' };
 const TIMEOUT_MS = Number(process.env.BUILD_TIMEOUT_S || 120) * 1000;
 const DOCKER = process.env.DOCKER_BIN || 'docker';
 const BUILD_TOKEN = process.env.BUILD_TOKEN || '';
@@ -43,22 +46,22 @@ async function cleanupStale() {
 }
 
 // Versions lues dans l'image (/etc/flipper-sdk.json, écrit et vérifié à la construction), sans l'exécuter.
-let sdkInfo = null;
-let sdkImageId = '';
-async function readSdkInfo() {
-  const id = await docker(['image', 'inspect', '--format', '{{.Id}}', IMAGE]);
-  if (!id.ok) throw new Error('image ' + IMAGE + ' introuvable');
+const sdkCache = new Map(); // image -> { id, info }
+async function readSdkInfo(image = IMAGE) {
+  const id = await docker(['image', 'inspect', '--format', '{{.Id}}', image]);
+  if (!id.ok) throw new Error('image ' + image + ' introuvable');
   const imageId = String(id.stdout).trim();
-  if (sdkInfo && imageId === sdkImageId) return sdkInfo;
+  const cached = sdkCache.get(image);
+  if (cached && cached.id === imageId) return cached.info;
   const name = 'flipper-builder-info-' + randomBytes(6).toString('hex');
-  const c = await docker(['create', '--name', name, '--label', LABEL, '--network', 'none', IMAGE]);
+  const c = await docker(['create', '--name', name, '--label', LABEL, '--network', 'none', image]);
   if (!c.ok) throw new Error('docker create a échoué');
   try {
     const cp = await docker(['cp', name + ':/etc/flipper-sdk.json', '-']);
     if (!cp.ok) throw new Error('docker cp a échoué');
     const info = JSON.parse(readTar(cp.stdout)['flipper-sdk.json'].toString());
-    sdkInfo = { firmware: String(info.firmware), api: String(info.api) };
-    sdkImageId = imageId;
+    const sdkInfo = { firmware: String(info.firmware), api: String(info.api) };
+    sdkCache.set(image, { id: imageId, info: sdkInfo });
     return sdkInfo;
   } finally {
     await docker(['rm', '-f', name]);
@@ -66,7 +69,7 @@ async function readSdkInfo() {
 }
 
 // Lance un conteneur neuf, envoie les sources en tar sur stdin, récupère le tar de sortie sur stdout.
-function runBuild(tar) {
+function runBuild(tar, image = IMAGE) {
   return new Promise((resolve) => {
     const name = 'flipper-build-' + randomBytes(8).toString('hex');
     const args = [
@@ -81,7 +84,7 @@ function runBuild(tar) {
       '--memory', '1g', '--memory-swap', '1g',
       '--cpus', '2',
       '--log-driver', 'none',
-      IMAGE,
+      image,
     ];
     const started = Date.now();
     const child = spawn(DOCKER, args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -148,13 +151,17 @@ async function handleBuild(req, res) {
   busy = true;
   try {
     let files;
+    let sdk = 'official';
     try {
       const body = JSON.parse((await readBody(req)).toString('utf8'));
       files = validateFiles(body && body.files);
+      if (body.sdk !== undefined) sdk = body.sdk;
+      if (!Object.hasOwn(IMAGES, sdk)) throw new Error('sdk : official ou momentum');
     } catch (e) {
       return send(res, e.status || 400, { ok: false, log: 'requête refusée : ' + e.message });
     }
-    const r = await runBuild(makeTar(files));
+    if (!IMAGES[sdk]) return send(res, 200, { ok: false, log: '[builder] SDK ' + sdk + ' non installé sur le VPS (IMAGE_MOMENTUM vide) : il faut construire son image.' });
+    const r = await runBuild(makeTar(files), IMAGES[sdk]);
     let parts = {};
     let parseErr = '';
     try {
@@ -169,7 +176,7 @@ async function handleBuild(req, res) {
     buildLog = truncateLog(buildLog);
     const fap = parts['app.fap'];
     const appid = parts['appid'] ? parts['appid'].toString('utf8').trim() : '';
-    log(`build ${appid || '?'} : ${fap && !r.reason ? 'ok' : 'échec'} en ${r.ms} ms${r.reason ? ' (' + r.reason + ')' : ''}`);
+    log(`build ${appid || '?'} (${sdk}) : ${fap && !r.reason ? 'ok' : 'échec'} en ${r.ms} ms${r.reason ? ' (' + r.reason + ')' : ''}`);
     if (r.reason || !fap) return send(res, 200, { ok: false, log: buildLog });
     if (fap.length > LIMITS.maxFap)
       return send(res, 200, { ok: false, log: buildLog + `\n[builder] .fap trop gros (${fap.length} octets > 1 Mo)\n` });
@@ -184,7 +191,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       const info = await readSdkInfo();
-      return send(res, 200, { ok: true, firmware: info.firmware, api: info.api });
+      let momentum = null;
+      if (IMAGES.momentum) {
+        try { momentum = await readSdkInfo(IMAGES.momentum); } catch (e) { momentum = { error: e.message }; }
+      }
+      return send(res, 200, { ok: true, firmware: info.firmware, api: info.api, momentum });
     }
     if (req.method === 'POST' && url.pathname === '/build') return await handleBuild(req, res);
     send(res, 404, { ok: false, log: 'introuvable' });
@@ -196,4 +207,4 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = TIMEOUT_MS + 60000;
 
 await cleanupStale();
-server.listen(PORT, HOST, () => log(`flipper-builder sur http://${HOST}:${PORT} (image ${IMAGE})`));
+server.listen(PORT, HOST, () => log(`flipper-builder sur http://${HOST}:${PORT} (images ${IMAGE}${IMAGES.momentum ? ', ' + IMAGES.momentum : ''})`));

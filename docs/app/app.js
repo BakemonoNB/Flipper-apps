@@ -1,4 +1,4 @@
-import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK, encodePath, F } from './flipper.js';
+import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK, encodePath, F, UPDATE_CODES } from './flipper.js';
 import { BridgeClient } from './bridge.js';
 import { MODULES } from './learn.js';
 import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v6 (clavier 2)';
+const APP_VERSION = '2026-11-08 · v7 (firmware)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -170,6 +170,7 @@ function render() {
   $('padConnect').textContent = busy || (flipper.device ? 'Reconnecter le Flipper' : 'Connecter le Flipper');
   for (const b of document.querySelectorAll('[data-key]')) b.disabled = !connected;
   $('aboutServer').textContent = serverCommit ? 'commit ' + serverCommit : '—';
+  $('aboutFw').textContent = fwLabel();
   chatControls();
 }
 
@@ -241,6 +242,7 @@ async function connectFlow() {
   const saved = parseInt(store.get(CHUNK_KEY) || '', 10);
   flipper.chunk = Number.isInteger(saved) && saved >= MIN_CHUNK ? saved : MIN_CHUNK;
   battery = await flipper.battery();
+  await readFirmware();
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
   log((flipper.flowFree !== null ? 'Contrôle de débit : ' + flipper.flowFree + ' octets libres' : 'Contrôle de débit indisponible') + ' · envois de ' + flipper.chunk + ' octets');
   announce('Flipper connecté');
@@ -403,8 +405,9 @@ $('autoStop').addEventListener('click', () => stopAutonomy('arrêté par toi'));
 
 // ---------- Outils demandés par le VPS ----------
 // Le niveau est décidé ICI, jamais par le message du serveur.
-const LEVELS = { read: 'Lecture', sensitive: 'Lecture sensible', write: 'Écriture', action: 'Action', run: 'Exécution', emit: 'Émission' };
-const RISKY = new Set(['run', 'emit']);
+const LEVELS = { read: 'Lecture', sensitive: 'Lecture sensible', write: 'Écriture', action: 'Action', run: 'Exécution', emit: 'Émission', firmware: 'Firmware' };
+const RISKY = new Set(['run', 'emit', 'firmware']);
+// Firmware : toujours validé à la main, même en mode autonome.
 const JS_RUNNERS = ['/ext/apps/System/js_app.fap', 'JS Runner', 'js_app'];
 let jsRunner = null;
 const preview = (s, n = 4000) => (s.length > n ? s.slice(0, n) + '\n… (' + (s.length - n) + ' caractères de plus)' : s);
@@ -537,6 +540,34 @@ const TOOLS = {
       return { path: a.path, size: bytes.length, next: 'start_app avec name = ' + a.path };
     },
   },
+  install_firmware: {
+    // Appelé seulement par le serveur (update_firmware) : paquet officiel ou Momentum, empreinte vérifiée par le VPS
+    // puis par le téléphone, fichier par fichier.
+    level: 'firmware',
+    check: (a) => {
+      if (typeof a.job !== 'string' || !/^[a-f0-9]{32}$/.test(a.job)) throw new Error('tâche invalide');
+      if (typeof a.dir !== 'string' || !FW_NAME.test(a.dir)) throw new Error('dossier de mise à jour invalide');
+      if (!['Officiel', 'Momentum'].includes(a.label)) throw new Error('firmware non autorisé');
+      if (typeof a.version !== 'string' || !/^[\w.+-]{1,64}$/.test(a.version)) throw new Error('version invalide');
+      if (!Array.isArray(a.files) || !a.files.length || a.files.length > 64) throw new Error('liste de fichiers invalide');
+      let total = 0;
+      for (const f of a.files) {
+        if (!f || !FW_NAME.test(f.name || '') || !Number.isInteger(f.size) || f.size < 0 || f.size > 64 * 1048576
+          || !/^[a-f0-9]{64}$/.test(f.sha256 || '')) throw new Error('fichier du paquet invalide');
+        total += f.size;
+      }
+      if (total > 150 * 1048576) throw new Error('paquet trop gros');
+      if (!a.files.some((f) => f.name === 'update.fuf')) throw new Error('manifeste update.fuf absent');
+    },
+    describe: (a) => 'installer le firmware ' + a.label + ' ' + a.version + ' (' + (a.files.reduce((s, f) => s + f.size, 0) / 1048576).toFixed(1).replace('.', ',') + ' Mo à copier)',
+    preview: async (a) => 'Firmware : ' + a.label + ' ' + a.version + (a.channel ? ' (canal ' + a.channel + ')' : '')
+      + '\nActuel : ' + fwLabel()
+      + '\nSource : ' + (typeof a.source === 'string' ? a.source.slice(0, 200) : '?')
+      + '\nEmpreinte SHA-256 vérifiée : ' + (typeof a.sha256 === 'string' ? a.sha256.slice(0, 64) : '?')
+      + '\n\nCopie dans /ext/update/' + a.dir + '/ :\n' + a.files.map((f) => '  ' + f.name + ' (' + Math.ceil(f.size / 1024) + ' Ko)').join('\n')
+      + '\n\nEnsuite : redémarrage, installation automatique, reconnexion de l\'app.',
+    run: (a) => installFirmware(a),
+  },
   start_app: {
     // Lancer un .fap = exécuter du code (souvent écrit par un modèle) : niveau Exécution.
     level: (a) => (isFap(a.name) ? 'run' : 'action'),
@@ -566,7 +597,7 @@ function confirmAction(req) {
 function pumpConfirm() {
   if (confirmCurrent || !confirmQueue.length) return;
   const c = confirmQueue.shift();
-  if (autoActive()) { c.resolve('allow'); pumpConfirm(); return; } // autonomie activée pendant l'attente
+  if (autoActive() && c.level !== 'firmware') { c.resolve('allow'); pumpConfirm(); return; } // autonomie activée pendant l'attente
   confirmCurrent = c;
   const risky = RISKY.has(c.level);
   $('cLevel').textContent = LEVELS[c.level] || c.level;
@@ -577,6 +608,8 @@ function pumpConfirm() {
       ? 'Une app compilée a accès à tout le Flipper (radio, USB, GPIO, fichiers). Ne la lance que si tu as validé son code.'
       : 'Un script peut taper au clavier d\'un ordinateur branché en USB (Bad USB) ou piloter les broches GPIO. Lis le code.',
     emit: 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.',
+    firmware: 'Le Flipper va changer de firmware. Pendant la copie (plusieurs minutes), garde Bluefy ouvert et l\'écran allumé ; '
+      + 'ensuite il redémarre et s\'installe tout seul. Les apps compilées pour l\'ancien firmware seront à recompiler.',
     sensitive: 'Ce dossier peut contenir des copies de badges, de cartes ou de clés.',
     write: c.tool === 'install_fap'
       ? (c.args.catalog ? 'App du catalogue officiel Flipper (binaire vérifié). Installer ne la lance pas.' : 'Code source de l\'app ci-dessous. Installer ne la lance pas.')
@@ -585,7 +618,9 @@ function pumpConfirm() {
   const args = { ...c.args };
   if (typeof args.content === 'string') args.content = '(' + args.content.length + ' caractères, voir ci-dessous)';
   if (typeof args.base64 === 'string') args.base64 = '(' + Math.round(args.base64.length * 3 / 4) + ' octets)';
-  if (typeof args.source === 'string') args.source = '(voir ci-dessous)';
+  if (typeof args.source === 'string' && c.tool !== 'install_firmware') args.source = '(voir ci-dessous)';
+  if (Array.isArray(args.files)) args.files = '(' + args.files.length + ' fichiers)';
+  dlg.querySelector('button[value="auto"]').hidden = c.level === 'firmware';
   $('cDetail').textContent = c.tool + ' ' + JSON.stringify(args);
   $('cPreview').hidden = !c.preview;
   $('cPreview').textContent = c.preview || '';
@@ -628,7 +663,7 @@ async function handleCall({ id, tool, args, origin }) {
   const level = typeof t.level === 'function' ? t.level(a) : t.level;
   let how = '';
   if (level !== 'read') {
-    if (autoActive()) {
+    if (autoActive() && level !== 'firmware') {
       how = ' (autonome)';
     } else {
       const pv = t.preview ? await t.preview(a) : null;
@@ -647,11 +682,151 @@ async function handleCall({ id, tool, args, origin }) {
   }
 }
 
+// ---------- Firmware du Flipper ----------
+// Lu à chaque connexion (system_device_info) et envoyé au VPS : il choisit le SDK de compilation, l'API du
+// catalogue et le dit aux modèles.
+let fwInfo = null;
+const fwLabel = () => (fwInfo ? [fwInfo.fork, fwInfo.version].filter(Boolean).join(' ') + (fwInfo.api ? ' (API ' + fwInfo.api + ')' : '') : '—');
+async function readFirmware() {
+  try {
+    const i = await flipper.deviceInfo();
+    const api = i.firmware_api_major ? i.firmware_api_major + '.' + (i.firmware_api_minor || '0') : null;
+    fwInfo = { fork: i.firmware_origin_fork || null, version: i.firmware_version || null, api };
+    log('Firmware : ' + fwLabel());
+  } catch (e) {
+    log('Firmware non lu : ' + errText(e), 'err');
+  }
+}
+
+// Barre de progression (copie d'un firmware) sous l'écran du Flipper. pct = null : cachée.
+function setFwBar(pct, text) {
+  const bar = $('fwBar');
+  bar.hidden = pct === null;
+  if (pct === null) return;
+  bar.querySelector('.fw-fill').style.width = pct + '%';
+  bar.querySelector('.fw-text').textContent = text;
+  bar.setAttribute('aria-valuenow', String(pct));
+}
+const fmtDur = (s) => (s < 90 ? Math.max(1, Math.round(s)) + ' s' : Math.round(s / 60) + ' min');
+const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+
+// Adresse HTTP du VPS déduite de celle du WebSocket (wss://hôte/flipper/ws -> https://hôte/flipper).
+function vpsHttpBase() {
+  try {
+    const u = new URL(loadSettings().url);
+    u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
+    u.pathname = u.pathname.replace(/\/ws\/?$/, '');
+    u.search = '';
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+const FW_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+async function installFirmware(a) {
+  const base = vpsHttpBase();
+  if (!base) throw new Error('adresse du VPS inconnue');
+  const dir = '/ext/update/' + a.dir;
+  const total = a.files.reduce((s, f) => s + f.size, 0);
+  // Petits fichiers d'abord, manifeste en dernier : sans update.fuf, un dossier incomplet n'est jamais installé.
+  const files = [...a.files].sort((x, y) => (x.name === 'update.fuf') - (y.name === 'update.fuf') || x.size - y.size);
+  const t0 = performance.now();
+  let done = 0;
+  let base0 = 0; // octets déjà présents (reprise) : exclus du calcul de vitesse
+  const show = (sent) => {
+    const pct = Math.min(99, Math.floor((sent / total) * 100));
+    const rate = (sent - base0) / Math.max((performance.now() - t0) / 1000, 1);
+    const left = rate > 0 ? (total - sent) / rate : 0;
+    setFwBar(pct, 'Firmware ' + a.label + ' : ' + pct + ' %' + (sent > base0 ? ' · encore ' + fmtDur(left) : '') + ' · garde l\'app ouverte');
+  };
+  // Le flux d'écran partage la liaison Bluetooth : coupé pendant la copie.
+  await flipper.stopScreen().catch(() => {});
+  lastFrame = null;
+  show(0);
+  try {
+    await flipper.mkdirs(dir);
+    for (const f of files) {
+      const path = dir + '/' + f.name;
+      const st = await flipper.stat(path).catch(() => null);
+      if (st && st.size === f.size && f.name !== 'update.fuf' && done === base0) {
+        // Reprise après une coupure : fichier déjà là (taille identique ; le Flipper vérifie ensuite le firmware).
+        done += f.size; base0 = done; show(done);
+        log('Firmware : ' + f.name + ' déjà sur le Flipper');
+        continue;
+      }
+      const res = await fetch(base + '/fw/' + a.job + '/' + encodeURIComponent(f.name), { cache: 'no-store' });
+      if (!res.ok) throw new Error('téléchargement de ' + f.name + ' depuis le VPS : HTTP ' + res.status + (res.status === 404 ? ' (paquet expiré : relance la mise à jour)' : ''));
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length !== f.size) throw new Error(f.name + ' : ' + bytes.length + ' octets reçus au lieu de ' + f.size);
+      if (hex(await crypto.subtle.digest('SHA-256', bytes)) !== f.sha256) throw new Error(f.name + ' : empreinte incorrecte après téléchargement');
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await flipper.write(path, bytes, { onProgress: (i, n) => show(done + Math.round((f.size * i) / n)) });
+          const st2 = await flipper.stat(path);
+          if (!st2 || st2.size !== f.size) throw new Error('taille sur le Flipper ' + (st2 ? st2.size : 'absente') + ' au lieu de ' + f.size);
+          break;
+        } catch (e) {
+          if (attempt >= 3 || !flipper.connected) throw new Error('copie de ' + f.name + ' : ' + errText(e));
+          log('Firmware : nouvelle copie de ' + f.name + ' (' + errText(e) + ')', 'err');
+        }
+      }
+      done += f.size;
+      log('Firmware : ' + f.name + ' copié (' + Math.ceil(f.size / 1024) + ' Ko)');
+    }
+    setFwBar(99, 'Vérification par le Flipper…');
+    const code = await flipper.updateRequest(dir + '/update.fuf');
+    if (code !== 0) throw new Error('le Flipper refuse la mise à jour : ' + (UPDATE_CODES[code] || 'code ' + code));
+    const secs = (performance.now() - t0) / 1000;
+    log('Firmware ' + a.label + ' ' + a.version + ' copié en ' + fmtDur(secs) + ' : redémarrage pour l\'installation.', 'ok');
+    // Réponse au VPS d'abord : la liaison Bluetooth tombe au redémarrage.
+    setTimeout(() => {
+      flipper.reboot(2).catch(() => {});
+      waitAfterFirmware(a);
+    }, 800);
+    return { copied: total, seconds: Math.round(secs), next: 'Le Flipper redémarre et installe (souvent 2 à 10 min). L\'app se reconnecte seule ; vérifie ensuite la ligne « Firmware actuel ».' };
+  } catch (e) {
+    setFwBar(null);
+    if (flipper.connected) flipper.startScreen().catch(() => {});
+    throw e;
+  }
+}
+
+// Après le redémarrage en mode mise à jour : le Flipper installe puis redémarre. On retente la connexion
+// toutes les 10 s pendant 15 min (Bluefy doit rester au premier plan).
+async function waitAfterFirmware(a) {
+  const until = Date.now() + 15 * 60000;
+  setFwBar(100, 'Installation sur le Flipper (quelques minutes) · garde l\'app ouverte');
+  announce('Le Flipper installe le firmware');
+  while (Date.now() < until && !flipper.connected) {
+    await new Promise((r) => setTimeout(r, 10000));
+    if (flipper.connected || busy || document.visibilityState !== 'visible') continue;
+    try {
+      busy = 'Reconnexion…';
+      render();
+      await connectFlow();
+    } catch { /* encore en installation */ } finally {
+      busy = null;
+      render();
+    }
+  }
+  setFwBar(null);
+  if (flipper.connected) {
+    log('Flipper redémarré. Firmware : ' + fwLabel(), 'ok');
+    announce('Flipper reconnecté : ' + fwLabel());
+  } else {
+    log('Le Flipper ne répond pas après 15 min. Regarde son écran. S\'il tourne mais refuse la connexion : Réglages iOS > Bluetooth > oublier le Flipper, puis Connecter.', 'err');
+  }
+}
+
 // ---------- Pont VPS ----------
 function sendState() {
   bridge.send({
     type: 'state',
-    state: { flipper: { connected: flipper.connected, name: flipper.name, battery: flipper.connected ? battery : null } },
+    state: {
+      flipper: { connected: flipper.connected, name: flipper.name, battery: flipper.connected ? battery : null },
+      firmware: fwInfo,
+    },
   });
 }
 

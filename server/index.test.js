@@ -82,10 +82,10 @@ test('WebSocket : mauvais jeton -> fermeture 4003', async () => {
 test('appel de bout en bout : API -> téléphone -> API', async () => {
   const t = await phone();
   assert.equal(t.closed, null);
-  t.ws.send(JSON.stringify({ type: 'state', state: { flipper: { connected: true, name: 'Flipper Test', battery: 91 } } }));
+  t.ws.send(JSON.stringify({ type: 'state', state: { flipper: { connected: true, name: 'Flipper Test', battery: 91 }, firmware: { fork: 'Momentum', version: 'mntm-012', api: '87.1', extra: 'x' } } }));
   await wait(50);
   const s = await (await api('/api/status')).json();
-  assert.deepEqual(s.phone.state, { flipper: { connected: true, name: 'Flipper Test', battery: 91 } });
+  assert.deepEqual(s.phone.state, { flipper: { connected: true, name: 'Flipper Test', battery: 91 }, firmware: { fork: 'Momentum', version: 'mntm-012', api: '87.1' } });
 
   const r = await api('/api/call', { method: 'POST', body: JSON.stringify({ tool: 'ping', args: { n: 1 } }) });
   assert.equal(r.status, 200);

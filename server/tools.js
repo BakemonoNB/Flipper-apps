@@ -35,7 +35,7 @@ export const TOOLS = [
   },
   {
     name: 'write_file',
-    description: 'Crée ou remplace un fichier texte (64 Ko max), seulement dans /ext/apps/Scripts/ ou /ext/apps_data/. Les dossiers manquants sont créés.',
+    description: 'Crée ou remplace un fichier texte (64 Ko max), seulement dans /ext/apps/Scripts/, /ext/apps_data/ ou /ext/asset_packs/ (packs Momentum : Anims, Icons, Fonts). Les dossiers manquants sont créés.',
     inputSchema: obj({
       path: path('Exemple : /ext/apps/Scripts/mon_script.js ou /ext/apps_data/mon_script/config.txt'),
       content: { type: 'string', description: 'Contenu du fichier' },
@@ -43,7 +43,7 @@ export const TOOLS = [
   },
   {
     name: 'delete_file',
-    description: 'Supprime un fichier (ou un dossier vide), seulement dans /ext/apps/Scripts/ ou /ext/apps_data/.',
+    description: 'Supprime un fichier (ou un dossier vide), seulement dans /ext/apps/Scripts/, /ext/apps_data/ ou /ext/asset_packs/.',
     inputSchema: obj({ path: path('Fichier à supprimer') }, ['path']),
   },
   {
@@ -70,7 +70,7 @@ export const TOOLS = [
   },
   {
     name: 'build_app',
-    description: 'Compile une app C pour le Flipper (firmware officiel 1.5.1, API 88.2) dans un conteneur isolé sur le VPS. '
+    description: 'Compile une app C pour le firmware actuel du Flipper (SDK officiel ou Momentum, choisi automatiquement) dans un conteneur isolé sur le VPS. '
       + 'files : {"application.fam": "...", "mon_app.c": "..."} (texte). Renvoie build_id, appid, taille et le journal '
       + '(erreurs du compilateur à corriger). N\'installe rien : ensuite install_app.',
     inputSchema: obj({
@@ -97,6 +97,17 @@ export const TOOLS = [
       build_id: { type: 'string', description: 'Renvoyé par build_app' },
       category: { type: 'string', description: 'Dossier : Tools (défaut), Games, GPIO, Misc…' },
     }, ['build_id']),
+  },
+  {
+    name: 'update_firmware',
+    description: 'Installe ou met à jour le firmware du Flipper par Bluetooth, comme l\'app officielle : le VPS télécharge le paquet '
+      + '(seulement depuis l\'index officiel ou celui de Momentum), vérifie son empreinte, le téléphone le copie puis le Flipper '
+      + 'redémarre et s\'installe. Mikha valide TOUJOURS (même en mode autonome). Seulement si Mikha l\'a demandé. '
+      + 'Long (plusieurs minutes de copie). Ensuite, attends la reconnexion et vérifie le firmware (ligne « Firmware actuel »).',
+    inputSchema: obj({
+      firmware: { type: 'string', enum: ['official', 'momentum'], description: 'official ou momentum' },
+      channel: { type: 'string', enum: ['release', 'rc', 'development'], description: 'Canal (défaut release)' },
+    }, ['firmware']),
   },
   {
     name: 'memory_search',

@@ -17,7 +17,9 @@ const MAX_OLLAMA_MSGS = 24;  // messages gardés dans le contexte de gpt-oss
 
 // workDir : dossier de travail de Claude (documentation lisible avec Read : CLAUDE.md, types du SDK JS).
 export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, ollamaThink = 'medium', stateDir, workDir, mcpConfigPath,
-  claudeBin, ollamaUrl, ollamaNumCtx, log, sendToPhone, callTool }) {
+  claudeBin, ollamaUrl, ollamaNumCtx, log, sendToPhone, callTool, contextLine = () => '' }) {
+  // contextLine : ligne ajoutée au prompt à chaque message (ex. firmware actuel lu par le téléphone).
+  const withContext = (p) => { const l = contextLine(); return l ? p + '\n' + l : p; };
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const file = join(stateDir, 'chat.json');
   let state = { conversations: {} };
@@ -88,7 +90,7 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
       if (m.kind === 'claude') {
         try {
           const r = await runClaude({
-            bin: claudeBin, model: m.model, text, sessionId: c.claudeSession, systemPrompt, mcpConfigPath,
+            bin: claudeBin, model: m.model, text, sessionId: c.claudeSession, systemPrompt: withContext(systemPrompt), mcpConfigPath,
             toolNames: toolNames(), cwd: workDir, onEvent,
           });
           c.claudeSession = r.sessionId;
@@ -100,7 +102,7 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
         const snapshot = c.ollamaMessages.map((m) => ({ ...m }));
         try {
           await runOllama({
-            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, think: ollamaThink, systemPrompt: ollamaPrompt, messages: c.ollamaMessages, text,
+            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, think: ollamaThink, systemPrompt: withContext(ollamaPrompt), messages: c.ollamaMessages, text,
             tools: ollamaTools(), callTool: (name, args) => callForText(name, args, model), onEvent,
           });
         } catch (e) {

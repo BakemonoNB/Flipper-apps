@@ -6,7 +6,9 @@ const SAFE_CAT = /^[A-Za-z0-9_-]{1,24}$/;
 // Le catalogue renvoie « _id » (MongoDB) ; lab.flipper.net le convertit en « id » côté client. On accepte les deux.
 const idOf = (o) => (o && (o._id || o.id)) || undefined;
 
-export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone, now = () => Date.now() }) {
+// api : version d'API du firmware (texte) ou fonction qui la renvoie (firmware lu en direct par le téléphone).
+export function createCatalog({ url, target = 'f7', api: apiOpt = '88.2', log, callPhone, now = () => Date.now() }) {
+  const apiNow = () => String(typeof apiOpt === 'function' ? apiOpt() : apiOpt);
   const base = url.replace(/\/$/, '');
   let cats = null; // id -> name
   let catsAt = 0;
@@ -52,6 +54,7 @@ export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone
   }
 
   async function search(args) {
+    const api = apiNow();
     const query = typeof args.query === 'string' ? args.query.slice(0, 80) : '';
     let list, catMap;
     try {
@@ -86,6 +89,7 @@ export function createCatalog({ url, target = 'f7', api = '88.2', log, callPhone
   }
 
   async function install(args, origin) {
+    const api = apiNow();
     const id = typeof args.id === 'string' ? args.id : '';
     if (!id) return { ok: false, error: 'id d\'app requis (donné par catalog_search)' };
     let app, catMap;

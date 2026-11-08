@@ -8,7 +8,8 @@ export const SCRIPTS_DIR = '/ext/apps/Scripts';
 // Lecture soumise à validation : copies de badges, cartes, télécommandes, clés U2F.
 const SENSITIVE = ['/ext/nfc', '/ext/lfrfid', '/ext/ibutton', '/ext/subghz', '/ext/u2f'];
 // Seuls endroits où un modèle peut écrire ou supprimer.
-const WRITABLE = ['/ext/apps/scripts', '/ext/apps_data'];
+// /ext/asset_packs : packs d'animations, d'icônes et de polices de Momentum (personnalisation).
+const WRITABLE = ['/ext/apps/scripts', '/ext/apps_data', '/ext/asset_packs'];
 
 const under = (p, dir) => p === dir || p.startsWith(dir + '/');
 
@@ -30,7 +31,7 @@ export function checkWritable(p) {
   const q = normPath(p);
   const l = q.toLowerCase();
   if (!WRITABLE.some((d) => under(l, d) && l !== d)) {
-    throw new Error('écriture autorisée seulement dans ' + SCRIPTS_DIR + '/ et /ext/apps_data/');
+    throw new Error('écriture autorisée seulement dans ' + SCRIPTS_DIR + '/, /ext/apps_data/ et /ext/asset_packs/');
   }
   return q;
 }

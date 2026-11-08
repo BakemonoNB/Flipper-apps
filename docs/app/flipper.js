@@ -27,6 +27,16 @@ export const F = {
   storageStat: 24, storageStatResponse: 25,
   appStart: 16,
   appGetError: 63, appGetErrorResponse: 64,
+  systemReboot: 31,
+  systemDeviceInfo: 32, systemDeviceInfoResponse: 33,
+  systemUpdate: 41, systemUpdateResponse: 46,
+};
+
+// PB_System.UpdateResponse.UpdateResultCode
+export const UPDATE_CODES = {
+  1: 'chemin du manifeste invalide', 2: 'dossier de mise à jour introuvable', 3: 'manifeste invalide',
+  4: 'étape de mise à jour manquante', 5: 'étape de mise à jour corrompue (fichier mal copié)', 6: 'pointeur de manifeste invalide',
+  7: 'paquet pour un autre modèle de Flipper', 8: 'manifeste trop ancien', 9: 'mémoire interne pleine', 10: 'erreur non précisée',
 };
 
 // Taille des données par message d'écriture de fichier (comme qFlipper).
@@ -265,7 +275,7 @@ export class Flipper extends EventTarget {
 
   // Envoie une commande et attend la réponse complète (plusieurs messages si has_next).
   // bodies : un tableau pour envoyer la commande en plusieurs messages (has_next sur tous sauf le dernier).
-  request(field, body = new Uint8Array(0), { timeout = 5000 } = {}) {
+  request(field, body = new Uint8Array(0), { timeout = 5000, onProgress = null } = {}) {
     if (!this.connected) return Promise.reject(new Error('Flipper non connecté'));
     const id = this.nextId;
     this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
@@ -281,7 +291,7 @@ export class Flipper extends EventTarget {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
       });
-      this._writeFrames(frames).catch((e) => {
+      this._writeFrames(frames, onProgress).catch((e) => {
         const p = this.pending.get(id);
         if (p) { this.pending.delete(id); p.reject(e); }
       });
@@ -381,8 +391,9 @@ export class Flipper extends EventTarget {
     return concat(...chunks);
   }
 
-  write(path, data) {
-    return this.request(F.storageWrite, encodeWriteChunks(path, data), { timeout: 30000 + data.length * 5 });
+  // onProgress(envoyés, total) : messages envoyés (pour une barre de progression).
+  write(path, data, { onProgress = null } = {}) {
+    return this.request(F.storageWrite, encodeWriteChunks(path, data), { timeout: 30000 + data.length * 5, onProgress });
   }
 
   delete(path, recursive = false) {
@@ -397,6 +408,38 @@ export class Flipper extends EventTarget {
       try { await this.request(F.storageMkdir, encodePath(p)); }
       catch (e) { if (!(e instanceof RpcError && e.status === 6)) throw e; }
     }
+  }
+
+  // ---------- Système ----------
+
+  // Informations du Flipper (clé -> valeur) : firmware_version, firmware_origin_fork, firmware_api_major/minor…
+  async deviceInfo() {
+    const parts = await this.request(F.systemDeviceInfo, new Uint8Array(0), { timeout: 15000 });
+    const dec = new TextDecoder();
+    const info = {};
+    for (const p of parts) {
+      for (const r of p.filter((x) => x.field === F.systemDeviceInfoResponse)) {
+        const f = decodeFields(r.bytes);
+        const k = getField(f, 1);
+        const v = getField(f, 2);
+        if (k && k.bytes) info[dec.decode(k.bytes)] = v && v.bytes ? dec.decode(v.bytes) : '';
+      }
+    }
+    return info;
+  }
+
+  // Demande l'installation du paquet déjà copié sur la carte SD. Renvoie le code du Flipper (0 = accepté).
+  async updateRequest(manifest) {
+    const parts = await this.request(F.systemUpdate, fieldBytes(1, utf8(manifest)), { timeout: 60000 });
+    const r = parts.length ? getField(parts[0], F.systemUpdateResponse) : null;
+    return r ? getValue(decodeFields(r.bytes), 1) : 0;
+  }
+
+  // Redémarrage (mode 2 = installer la mise à jour préparée). Le Flipper ne répond pas : il redémarre.
+  reboot(mode) {
+    const id = this.nextId;
+    this.nextId = this.nextId >= 0x7fffffff ? 1 : this.nextId + 1;
+    return this._writeFrames([encodeRequest(id, F.systemReboot, fieldVarint(1, mode))]);
   }
 
   // ---------- Apps ----------
@@ -472,7 +515,7 @@ export class Flipper extends EventTarget {
   // Écrit les messages d'une commande d'un seul tenant (sans qu'une autre commande s'intercale :
   // le Flipper refuserait une commande en plusieurs messages interrompue). Pour un gros message,
   // on attend que le Flipper ait vraiment la place, en relisant la valeur plutôt qu'en la calculant.
-  _writeFrames(frames) {
+  _writeFrames(frames, onProgress = null) {
     if (frames.length === 1 && frames[0].length <= 64) return this._write(frames[0]);
     const run = async () => {
       for (let i = 0; i < frames.length; i++) {
@@ -490,6 +533,7 @@ export class Flipper extends EventTarget {
         } catch (e) {
           throw new Error(e.message + ' (message ' + (i + 1) + '/' + frames.length + ', place lue avant : ' + free + ')');
         }
+        if (onProgress && (i % 16 === 15 || i === frames.length - 1)) onProgress(i + 1, frames.length);
       }
     };
     const p = this.writeChain.then(run);

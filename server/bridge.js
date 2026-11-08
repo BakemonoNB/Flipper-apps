@@ -147,5 +147,14 @@ function cleanState(s) {
       name: typeof f.name === 'string' ? f.name.slice(0, 64) : null,
       battery: Number.isInteger(f.battery) ? f.battery : null,
     },
+    firmware: cleanFirmware(s.firmware),
   };
+}
+
+// Firmware lu par le téléphone (system_device_info) : fork (Official, Momentum…), version, API « 87.1 ».
+function cleanFirmware(fw) {
+  if (!fw || typeof fw !== 'object') return null;
+  const str = (v) => (typeof v === 'string' && /^[\w .+-]{1,40}$/.test(v) ? v : null);
+  const api = typeof fw.api === 'string' && /^\d{1,3}\.\d{1,3}$/.test(fw.api) ? fw.api : null;
+  return api || str(fw.version) ? { fork: str(fw.fork), version: str(fw.version), api } : null;
 }

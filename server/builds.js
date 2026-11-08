@@ -21,7 +21,8 @@ function sourcePreview(files) {
   return text.length > 8000 ? text.slice(0, 8000) + '\n… (' + (text.length - 8000) + ' caractères de plus)' : text;
 }
 
-export function createBuilds({ url, token, log, callPhone, now = () => Date.now() }) {
+// sdk() : « official » ou « momentum », selon le firmware lu par le téléphone (le builder a un SDK par firmware).
+export function createBuilds({ url, token, log, callPhone, sdk = () => 'official', now = () => Date.now() }) {
   const builds = new Map(); // build_id -> { appid, fap, files, preview, at }
 
   // meta.source : provenance montrée à Mikha avec le code (ex. dépôt GitHub).
@@ -36,7 +37,7 @@ export function createBuilds({ url, token, log, callPhone, now = () => Date.now(
       res = await fetch(url.replace(/\/$/, '') + '/build', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-build-token': token },
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ files, sdk: sdk() }),
         signal: AbortSignal.timeout(180000),
       });
     } catch (e) {
