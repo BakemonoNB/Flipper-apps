@@ -1,5 +1,6 @@
 import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK, encodePath, F } from './flipper.js';
 import { BridgeClient } from './bridge.js';
+import { MODULES } from './learn.js';
 import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
 const $ = (id) => document.getElementById(id);
@@ -45,7 +46,7 @@ function log(msg, cls) {
 }
 
 // ---------- Onglets ----------
-const TABS = ['pad', 'chat', 'log', 'settings'];
+const TABS = ['pad', 'chat', 'learn', 'settings'];
 let currentTab = 'pad';
 
 function selectTab(name, { focus = false } = {}) {
@@ -186,7 +187,39 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (flipper.connected && !wakeLock) keepAwake();
   bridge.wake();
+  if (wantConnected && !flipper.connected) autoReconnect();
 });
+
+// Reconnexion automatique : si le Flipper décroche sans que tu l'aies demandé (arrière-plan iOS, distance),
+// l'app réessaie (1 s, 3 s, 8 s), et à nouveau quand tu reviens dans Bluefy.
+let wantConnected = false;
+let reconnecting = false;
+async function autoReconnect() {
+  if (reconnecting || !flipper.device) return;
+  reconnecting = true;
+  try {
+    for (const delay of [1000, 3000, 8000]) {
+      await new Promise((r) => setTimeout(r, delay));
+      if (!wantConnected || flipper.connected || busy) return;
+      if (document.visibilityState !== 'visible') return; // on reprendra au retour au premier plan
+      try {
+        busy = 'Reconnexion…';
+        render();
+        await connectFlow();
+        log('Reconnecté automatiquement.', 'ok');
+        return;
+      } catch (e) {
+        log('Reconnexion : ' + errText(e), 'err');
+      } finally {
+        busy = null;
+        render();
+      }
+    }
+    log('Reconnexion automatique abandonnée : touche Reconnecter.', 'err');
+  } finally {
+    reconnecting = false;
+  }
+}
 
 const CHUNK_KEY = 'flipper-chunk';
 async function connectFlow() {
@@ -197,6 +230,7 @@ async function connectFlow() {
   log('Connecté à ' + flipper.name + (battery != null ? ' (batterie ' + battery + ' %)' : ''), 'ok');
   log((flipper.flowFree !== null ? 'Contrôle de débit : ' + flipper.flowFree + ' octets libres' : 'Contrôle de débit indisponible') + ' · envois de ' + flipper.chunk + ' octets');
   announce('Flipper connecté');
+  wantConnected = true;
   render();
   sendState();
   keepAwake();
@@ -209,7 +243,7 @@ async function connectFlow() {
 }
 
 $('main').addEventListener('click', () => {
-  if (flipper.connected) { flipper.disconnect(); return; }
+  if (flipper.connected) { wantConnected = false; flipper.disconnect(); return; }
   // requestDevice doit partir directement du tap : pas d'await avant pick().
   const picking = flipper.device ? Promise.resolve() : flipper.pick();
   withBusy('Connexion…', async () => { await picking; await connectFlow(); });
@@ -228,6 +262,7 @@ flipper.addEventListener('disconnected', () => {
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   render();
   sendState();
+  if (wantConnected) autoReconnect();
 });
 flipper.addEventListener('error', (e) => log('Erreur de flux : ' + errText(e.detail), 'err'));
 flipper.addEventListener('notice', (e) => log('Bluetooth : ' + e.detail, 'err'));
@@ -944,7 +979,7 @@ $('probe').addEventListener('click', async () => {
     if (best < 240) log('Après un refus, déconnecte puis reconnecte le Flipper avant de continuer.', 'err');
   } finally {
     $('probe').disabled = false;
-    selectTab('log');
+    showJournal();
   }
 });
 
@@ -953,7 +988,7 @@ $('probe').addEventListener('click', async () => {
 $('diag').addEventListener('click', async () => {
   if (!flipper.connected) { log('Diagnostic : connecte d\'abord le Flipper.', 'err'); return; }
   $('diag').disabled = true;
-  selectTab('log');
+  showJournal();
   const dir = '/ext/apps_data/flipper_bridge';
   const bytes = (n) => Uint8Array.from({ length: n }, (_, i) => 32 + (i % 90));
   const step = async (label, fn) => {
@@ -989,6 +1024,109 @@ $('diag').addEventListener('click', async () => {
     $('diag').disabled = false;
   }
   log('Diagnostic terminé : Copier, puis envoie le journal. Si une étape a échoué, reconnecte le Flipper ensuite.');
+});
+
+function showJournal() {
+  selectTab('settings');
+  requestAnimationFrame(() => $('journalCard').scrollIntoView({ block: 'start' }));
+}
+
+// ---------- Apprendre ----------
+const LEARN_KEY = 'flipper-learn-done';
+const learnDone = new Set((() => { try { return JSON.parse(store.get(LEARN_KEY) || '[]'); } catch { return []; } })());
+let learnCurrent = null;
+
+function renderLearn() {
+  const box = $('learnCards');
+  box.textContent = '';
+  for (const m of MODULES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'learn-card' + (learnDone.has(m.id) ? ' done' : '');
+    b.setAttribute('aria-label', m.title + (learnDone.has(m.id) ? ', terminé' : '') + '. ' + m.pitch);
+    const ic = document.createElement('span'); ic.className = 'ic'; ic.textContent = m.icon; ic.setAttribute('aria-hidden', 'true');
+    const txt = document.createElement('span');
+    const t = document.createElement('div'); t.className = 't'; t.textContent = m.title;
+    const p = document.createElement('div'); p.className = 'p'; p.textContent = m.pitch;
+    txt.append(t, p);
+    const ck = document.createElement('span'); ck.className = 'ck'; ck.textContent = '✓'; ck.setAttribute('aria-hidden', 'true');
+    b.append(ic, txt, ck);
+    b.addEventListener('click', () => openModule(m.id));
+    box.appendChild(b);
+  }
+  $('learnProgress').textContent = learnDone.size + ' / ' + MODULES.length + ' terminés';
+}
+
+function openModule(id) {
+  const m = MODULES.find((x) => x.id === id);
+  if (!m) return;
+  learnCurrent = m;
+  $('ldTitle').textContent = m.title;
+  $('ldWhat').textContent = m.what;
+  const ol = $('ldSteps');
+  ol.textContent = '';
+  for (const s of m.steps) { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); }
+  $('ldLegal').hidden = !m.legal;
+  $('ldLegal').textContent = m.legal || '';
+  $('ldOpen').hidden = !m.app;
+  $('ldOpen').textContent = 'Ouvrir sur le Flipper';
+  renderDone();
+  $('learnList').hidden = true;
+  $('learnDetail').hidden = false;
+  scroller.scrollTop = 0;
+  $('ldTitle').setAttribute('tabindex', '-1');
+  $('ldTitle').focus({ preventScroll: true });
+}
+
+function renderDone() {
+  const done = learnCurrent && learnDone.has(learnCurrent.id);
+  $('ldDone').textContent = done ? '✓ Terminé' : 'Marquer comme fait';
+  $('ldDone').setAttribute('aria-pressed', String(!!done));
+}
+
+$('learnBack').addEventListener('click', () => {
+  $('learnDetail').hidden = true;
+  $('learnList').hidden = false;
+  renderLearn();
+  scroller.scrollTop = 0;
+});
+
+$('ldDone').addEventListener('click', () => {
+  if (!learnCurrent) return;
+  if (learnDone.has(learnCurrent.id)) learnDone.delete(learnCurrent.id); else learnDone.add(learnCurrent.id);
+  store.set(LEARN_KEY, JSON.stringify([...learnDone]));
+  renderDone();
+  announce(learnDone.has(learnCurrent.id) ? 'Module terminé' : 'Module à refaire');
+});
+
+$('ldOpen').addEventListener('click', async () => {
+  const m = learnCurrent;
+  if (!m || !m.app) return;
+  if (!flipper.connected) { announce('Connecte d\'abord le Flipper'); $('ldOpen').textContent = 'Connecte d\'abord le Flipper'; return; }
+  $('ldOpen').disabled = true;
+  try {
+    await flipper.startApp(m.app);
+    $('ldOpen').textContent = 'Ouvert sur le Flipper ✓';
+    log('Apprendre : ' + m.app + ' ouvert.', 'ok');
+  } catch (e) {
+    $('ldOpen').textContent = 'Ouverture impossible : ouvre-le depuis le menu';
+    log('Apprendre : ouverture de « ' + m.app + ' » impossible : ' + errText(e), 'err');
+  } finally {
+    $('ldOpen').disabled = false;
+  }
+});
+
+$('ldCoach').addEventListener('click', () => {
+  const m = learnCurrent;
+  if (!m) return;
+  selectTab('chat');
+  const claude = document.querySelector('#chatModels input[value="claude"]');
+  if (claude && !chat.live) { claude.checked = true; claude.dispatchEvent(new Event('change')); }
+  $('chatText').value = 'Mode coach, module « ' + m.title + ' ». Guide-moi pas à pas pour ' + m.coach + '. '
+    + 'À chaque étape : regarde l\'écran avec get_screen, dis-moi exactement quel bouton presser, puis vérifie que j\'ai réussi avant la suite. '
+    + 'N\'appuie jamais toi-même et ne lance rien : c\'est moi qui fais. Commence par me dire où je dois être.';
+  autoGrow();
+  $('chatText').focus();
 });
 
 // ---------- Mise à jour de l'app ----------
@@ -1028,6 +1166,7 @@ renderAuto();
   bridge.configure(s.url, s.token);
 }
 renderChat();
+renderLearn();
 render();
 log(navigator.bluetooth ? 'Web Bluetooth disponible.' : 'Web Bluetooth absent : ouvre la page dans Bluefy.',
   navigator.bluetooth ? 'ok' : 'err');

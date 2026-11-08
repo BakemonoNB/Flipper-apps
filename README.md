@@ -12,7 +12,7 @@ Apps et scripts pour Flipper Zero.
 - `apps/<nom>/` : apps C (`.fap`), compilées avec [ufbt](https://github.com/flipperdevices/flipperzero-ufbt).
 - `scripts/<nom>.js` : scripts JavaScript (mJS), sans compilation.
 - `docs/` : pages web pour le téléphone, à ouvrir dans Bluefy (iOS) :
-  - `docs/app/` : l'app (écran du Flipper en direct + boutons). `flipper.js` = client Bluetooth + RPC.
+  - `docs/app/` : l'app. Onglets Manette, Chat, Apprendre (contenu dans `learn.js`), Réglages (dont le journal et les diagnostics). `flipper.js` = client Bluetooth + RPC, `bridge.js` = WebSocket vers le VPS, `policy.js` = règles de chemins.
   - `docs/ble-test/` : test de connexion et ping RPC.
 - `server/` : pont VPS ↔ téléphone (Node 24, sans dépendance). `node index.js` ; `node --test` pour les tests.
   - Variables : `PORT`, `HOST`, `PHONE_TOKEN` (app téléphone, WebSocket `/ws`), `API_TOKEN` (appelants de `/api/*` et `/logs`), `LOGS_TOKEN` (`/logs`).
