@@ -1,6 +1,6 @@
 // Changement / mise à jour du firmware du Flipper, par Bluetooth via le téléphone (comme l'app officielle).
 // Le VPS télécharge le paquet de mise à jour (update_tgz, cible f7) UNIQUEMENT depuis l'index officiel ou
-// celui de Momentum, vérifie son empreinte SHA-256 publiée dans l'index, le décompresse et sert ses fichiers
+// ceux de Momentum et d'Unleashed, vérifie son empreinte SHA-256 publiée dans l'index, le décompresse et sert ses fichiers
 // au téléphone (/fw/<tâche>/<fichier>, adresse non devinable, 3 h). Le téléphone les copie dans
 // /ext/update/<dossier>/, demande la mise à jour au Flipper puis le redémarre. Mikha valide toujours.
 import { createHash, randomBytes } from 'node:crypto';
@@ -10,6 +10,8 @@ import { parseTar } from './github.js';
 export const FIRMWARES = {
   official: { label: 'Officiel', index: 'https://update.flipperzero.one/firmware/directory.json' },
   momentum: { label: 'Momentum', index: 'https://up.momentum-fw.dev/firmware/directory.json' },
+  // Adresse donnée par le ReadMe d'Unleashed (« directory json for ufbt builds »).
+  unleashed: { label: 'Unleashed', index: 'https://up.unleashedflip.com/directory.json' },
 };
 const CHANNELS = ['release', 'rc', 'development'];
 const MAX_PKG = 120 * 1024 * 1024;
@@ -84,7 +86,7 @@ export function createFirmware({ log, callPhone, indexes = {}, fetchImpl = fetch
   async function update(args, origin) {
     const a = args && typeof args === 'object' ? args : {};
     const fw = typeof a.firmware === 'string' ? a.firmware.toLowerCase() : '';
-    if (!Object.hasOwn(FIRMWARES, fw)) return { ok: false, error: 'firmware : « official » ou « momentum » (aucune autre source)' };
+    if (!Object.hasOwn(FIRMWARES, fw)) return { ok: false, error: 'firmware : « official », « unleashed » ou « momentum » (aucune autre source)' };
     const channel = a.channel === undefined ? 'release' : a.channel;
     if (!CHANNELS.includes(channel)) return { ok: false, error: 'channel : ' + CHANNELS.join(', ') };
     let p;

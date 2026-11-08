@@ -24,6 +24,7 @@ import { createMemory } from './memory.js';
 import { createCatalog } from './catalog.js';
 import { createGithub } from './github.js';
 import { createFirmware } from './firmware.js';
+import { createBackups } from './backups.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -81,7 +82,8 @@ const memory = createMemory({ brainDir: BRAIN_DIR, log });
 const catalog = createCatalog({ url: CATALOG_URL, target: CATALOG_TARGET, api: () => (liveFirmware() || {}).api || FLIPPER_API, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const github = createGithub({ build: (a, meta) => builds.build(a, meta), log });
 const firmware = createFirmware({ log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts),
-  indexes: { official: process.env.FW_INDEX_OFFICIAL, momentum: process.env.FW_INDEX_MOMENTUM } });
+  indexes: { official: process.env.FW_INDEX_OFFICIAL, momentum: process.env.FW_INDEX_MOMENTUM, unleashed: process.env.FW_INDEX_UNLEASHED } });
+let backups = null; // créé une fois STATE_DIR connu (plus bas)
 const INTERNAL_TOOLS = new Set(['install_fap', 'install_firmware']);
 export async function callTool(name, args, origin) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
@@ -93,6 +95,7 @@ export async function callTool(name, args, origin) {
   if (name === 'build_app') return builds.build(args);
   if (name === 'github_build') return github.build(a);
   if (name === 'update_firmware') return firmware.update(a, origin);
+  if (name === 'backup') return backups.run(a, origin);
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
   return bridge.call(name, args, origin);
@@ -110,6 +113,8 @@ const STATE_DIR = (() => {
     return fallback;
   }
 })();
+
+backups = createBackups({ dir: join(STATE_DIR, 'backups'), log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 
 // Configuration MCP pour Claude : seul le serveur Flipper, qui appelle l'API locale avec API_TOKEN.
 const mcpConfigPath = join(STATE_DIR, 'mcp-flipper.json');
@@ -199,6 +204,7 @@ async function route(req, res) {
 
   // Fichiers d'un paquet de firmware préparé (adresse non devinable, valable 3 h) : lus par le téléphone.
   if ((req.method === 'GET' || req.method === 'OPTIONS') && p.startsWith('/fw/')) return firmware.serve(req, res, p);
+  if ((req.method === 'GET' || req.method === 'OPTIONS') && p.startsWith('/bk/')) return backups.serve(req, res, p);
 
   if (p.startsWith('/api/')) {
     if (!API_TOKEN) return send(res, 503, { error: 'API_TOKEN non configuré' });

@@ -101,13 +101,24 @@ export const TOOLS = [
   {
     name: 'update_firmware',
     description: 'Installe ou met à jour le firmware du Flipper par Bluetooth, comme l\'app officielle : le VPS télécharge le paquet '
-      + '(seulement depuis l\'index officiel ou celui de Momentum), vérifie son empreinte, le téléphone le copie puis le Flipper '
+      + '(seulement depuis l\'index officiel, Unleashed ou Momentum), vérifie son empreinte, le téléphone le copie puis le Flipper '
       + 'redémarre et s\'installe. Mikha valide TOUJOURS (même en mode autonome). Seulement si Mikha l\'a demandé. '
       + 'Long (plusieurs minutes de copie). Ensuite, attends la reconnexion et vérifie le firmware (ligne « Firmware actuel »).',
     inputSchema: obj({
-      firmware: { type: 'string', enum: ['official', 'momentum'], description: 'official ou momentum' },
+      firmware: { type: 'string', enum: ['official', 'unleashed', 'momentum'], description: 'official, unleashed ou momentum' },
       channel: { type: 'string', enum: ['release', 'rc', 'development'], description: 'Canal (défaut release)' },
     }, ['firmware']),
+  },
+  {
+    name: 'backup',
+    description: 'Sauvegardes de dossiers de la carte SD sur le VPS. action=save + path (ex. /ext/dolphin, les animations) : '
+      + 'copie tout le dossier ; action=list : sauvegardes existantes ; action=restore + name : remet les fichiers sur le Flipper '
+      + '(Mikha valide une fois pour tout le lot). Sauvegarde avant un changement de firmware.',
+    inputSchema: obj({
+      action: { type: 'string', enum: ['save', 'list', 'restore'] },
+      path: { type: 'string', description: 'save : dossier, ex. /ext/dolphin' },
+      name: { type: 'string', description: 'restore : nom renvoyé par save ou list' },
+    }, ['action']),
   },
   {
     name: 'memory_search',

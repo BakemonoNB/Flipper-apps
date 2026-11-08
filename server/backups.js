@@ -1,0 +1,126 @@
+// Sauvegardes de dossiers de la carte SD du Flipper sur le VPS (ex. /ext/dolphin : animations du dauphin),
+// et restauration. Lecture : outils list_files / read_file du téléphone (niveau lecture). Restauration :
+// un seul outil restore_files côté téléphone (une validation pour tout le lot), qui télécharge les fichiers
+// depuis /bk/<tâche>/<chemin> (adresse aléatoire, 3 h).
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+
+const MAX_FILES = 3000;
+const MAX_TOTAL = 32 * 1024 * 1024;
+const MAX_DEPTH = 10;
+const JOB_TTL = 3 * 3600 * 1000;
+const BACKUP_NAME = /^[A-Za-z0-9._-]{1,80}$/;
+const sha256 = (b) => createHash('sha256').update(b).digest('hex');
+// Segment de nom de fichier du Flipper accepté (FAT) : ni « / », ni « .. », ni caractère de contrôle.
+const segOk = (s) => typeof s === 'string' && s.length > 0 && s.length <= 128 && s !== '.' && s !== '..' && !/[\u0000-\u001f/\\]/.test(s);
+const relOk = (rel) => typeof rel === 'string' && rel.split('/').every(segOk);
+
+export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const jobs = new Map(); // id -> { at, root, files: Map(rel -> abs) }
+
+  async function phone(tool, args, origin) {
+    const r = await callPhone(tool, args, origin);
+    if (!r || r.ok === false) throw new Error(tool + ' ' + (args.path || '') + ' : ' + ((r && r.error) || 'échec'));
+    return r.result;
+  }
+
+  async function save(a, origin) {
+    const src = typeof a.path === 'string' ? a.path.replace(/\/+$/, '') : '';
+    if (!/^\/ext(\/|$)/i.test(src) || !src.split('/').slice(1).every(segOk)) return { ok: false, error: 'path : un dossier de la carte SD, ex. /ext/dolphin' };
+    const stamp = now().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const name = (src.split('/').filter(Boolean).slice(1).join('_') || 'sd').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 50) + '-' + stamp;
+    const root = join(dir, name);
+    if (existsSync(root)) return { ok: false, error: 'une sauvegarde du même nom existe déjà (attends une minute)' };
+    const files = [];
+    let total = 0;
+    const queue = [{ path: src, rel: '', depth: 0 }];
+    try {
+      while (queue.length) {
+        const d = queue.shift();
+        const list = await phone('list_files', { path: d.path }, origin);
+        if (list.truncated) throw new Error('plus de 300 éléments dans ' + d.path);
+        for (const e of list.entries || []) {
+          if (!segOk(e.name)) throw new Error('nom refusé : ' + d.path + '/' + e.name);
+          const path = d.path + '/' + e.name;
+          const rel = d.rel ? d.rel + '/' + e.name : e.name;
+          if (e.type === 'dir') {
+            if (d.depth + 1 > MAX_DEPTH) throw new Error('dossiers trop imbriqués : ' + path);
+            queue.push({ path, rel, depth: d.depth + 1 });
+            continue;
+          }
+          if (files.length >= MAX_FILES) throw new Error('plus de ' + MAX_FILES + ' fichiers');
+          const r = await phone('read_file', { path }, origin);
+          const data = typeof r.base64 === 'string' ? Buffer.from(r.base64, 'base64') : Buffer.from(String(r.text ?? ''), 'utf8');
+          total += data.length;
+          if (total > MAX_TOTAL) throw new Error('plus de ' + MAX_TOTAL / 1048576 + ' Mo');
+          const abs = join(root, 'files', ...rel.split('/'));
+          mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
+          writeFileSync(abs, data, { mode: 0o600 });
+          files.push({ path: rel, size: data.length, sha256: sha256(data) });
+        }
+      }
+    } catch (e) {
+      rmSync(root, { recursive: true, force: true }); // pas de sauvegarde à moitié faite
+      return { ok: false, error: 'sauvegarde interrompue (' + files.length + ' fichiers lus) : ' + e.message };
+    }
+    const manifest = { name, source: src, created: now().toISOString(), files };
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 1), { mode: 0o600 });
+    log('INFO', 'sauvegarde ' + name + ' : ' + files.length + ' fichiers, ' + total + ' octets');
+    return { ok: true, result: { name, source: src, files: files.length, bytes: total, hint: 'backup action=restore name=' + name + ' pour la remettre' } };
+  }
+
+  function manifestOf(name) {
+    if (!BACKUP_NAME.test(name || '')) return null;
+    try { return JSON.parse(readFileSync(join(dir, name, 'manifest.json'), 'utf8')); } catch { return null; }
+  }
+
+  function list() {
+    const out = [];
+    for (const n of readdirSync(dir)) {
+      const m = manifestOf(n);
+      if (m) out.push({ name: m.name, source: m.source, created: m.created, files: m.files.length, bytes: m.files.reduce((s, f) => s + f.size, 0) });
+    }
+    out.sort((x, y) => (x.created < y.created ? 1 : -1));
+    return { ok: true, result: { backups: out } };
+  }
+
+  async function restore(a, origin) {
+    const m = manifestOf(a.name);
+    if (!m) return { ok: false, error: 'sauvegarde inconnue (backup action=list)' };
+    if (!m.files.every((f) => relOk(f.path))) return { ok: false, error: 'sauvegarde abîmée (chemins)' };
+    for (const [id, j] of jobs) if (Date.now() - j.at > JOB_TTL) jobs.delete(id);
+    const id = randomBytes(16).toString('hex');
+    jobs.set(id, { at: Date.now(), root: join(dir, m.name, 'files'), files: new Set(m.files.map((f) => f.path)) });
+    return callPhone('restore_files', { job: id, name: m.name, dest: m.source, created: m.created, files: m.files }, origin, { timeoutMs: JOB_TTL });
+  }
+
+  async function run(args, origin) {
+    const a = args && typeof args === 'object' ? args : {};
+    if (a.action === 'save') return save(a, origin);
+    if (a.action === 'list') return list();
+    if (a.action === 'restore') return restore(a, origin);
+    return { ok: false, error: 'action : save (path), list, restore (name)' };
+  }
+
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, OPTIONS', 'access-control-max-age': '600' };
+  // GET /bk/<tâche>/<chemin encodé> : un fichier de la sauvegarde en cours de restauration.
+  function serve(req, res, path) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
+    const m = /^\/bk\/([a-f0-9]{32})\/(.+)$/.exec(path);
+    const job = m && jobs.get(m[1]);
+    let rel = null;
+    try { rel = m ? decodeURIComponent(m[2]) : null; } catch { rel = null; }
+    if (!job || Date.now() - job.at > JOB_TTL || !rel || !job.files.has(rel) || !relOk(rel)) {
+      res.writeHead(404, { ...CORS, 'content-type': 'text/plain' });
+      return res.end('introuvable');
+    }
+    const data = readFileSync(join(job.root, ...rel.split('/')));
+    res.writeHead(200, { ...CORS, 'content-type': 'application/octet-stream', 'content-length': data.length, 'cache-control': 'no-store' });
+    res.end(data);
+  }
+
+  return { run, serve };
+}

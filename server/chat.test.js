@@ -105,7 +105,7 @@ test('gpt-oss : appel d\'outil via le téléphone, puis réponse en morceaux', a
   assert.equal(req.model, 'gpt-oss:20b');
   assert.equal(req.options.num_ctx, 8192);
   assert.equal(req.messages[0].role, 'system');
-  assert.equal(req.tools.length, 18);
+  assert.equal(req.tools.length, 19);
   assert.ok(req.tools.some((x) => x.function.name === 'run_script'));
   assert.equal(t.calls[0].origin, 'gpt-oss');
   assert.equal(ollamaRequests[1].messages.at(-1).role, 'tool');
@@ -132,7 +132,7 @@ test('Claude : options de sécurité, outil ping via le serveur MCP, puis repris
   let ev = eventsOf(t, 'c1');
   assert.deepEqual(ev.map((e) => e.event), ['tool', 'text', 'done'], JSON.stringify(ev));
   assert.equal(ev[0].tool, 'ping');
-  assert.match(ev[1].text, /outils=ping,get_screen,press_button,list_files,read_file,write_file,delete_file,run_script,catalog_search,install_catalog_app,build_app,github_build,install_app,update_firmware,memory_search,memory_read,memory_note,start_app proto=2025-06-18 ping=\{"latencyMs":42\}/);
+  assert.match(ev[1].text, /outils=ping,get_screen,press_button,list_files,read_file,write_file,delete_file,run_script,catalog_search,install_catalog_app,build_app,github_build,install_app,update_firmware,backup,memory_search,memory_read,memory_note,start_app proto=2025-06-18 ping=\{"latencyMs":42\}/);
   assert.equal(t.calls.at(-1).origin, 'claude');
 
   chat(t, 'claude', 'et maintenant ?', 'c2');

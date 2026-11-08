@@ -46,6 +46,14 @@ export function checkScript(p) {
 
 export const parentOf = (p) => p.slice(0, p.lastIndexOf('/'));
 
+// Restauration d'une sauvegarde (un lot validé une fois) : dossiers d'écriture habituels + animations du dauphin.
+const RESTORABLE = [...WRITABLE, '/ext/dolphin'];
+export function checkRestoreDest(p) {
+  const q = normPath(p);
+  if (!RESTORABLE.some((d) => under(q.toLowerCase(), d))) throw new Error('restauration possible seulement dans /ext/dolphin, /ext/apps/Scripts, /ext/apps_data, /ext/asset_packs');
+  return q;
+}
+
 // Installation d'une app : /ext/apps/<Catégorie>/<appid>.fap uniquement (jamais System).
 export const MAX_FAP_BYTES = 1024 * 1024;
 export function checkFapPath(p) {

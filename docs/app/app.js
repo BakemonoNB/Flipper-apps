@@ -1,14 +1,14 @@
 import { Flipper, Key, InputType, SCREEN_W, SCREEN_H, pixelOn, errText, MIN_CHUNK, encodePath, F, UPDATE_CODES } from './flipper.js';
 import { BridgeClient } from './bridge.js';
 import { MODULES } from './learn.js';
-import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
+import { normPath, isSensitive, checkWritable, checkScript, parentOf, checkFapPath, isFap, checkRestoreDest, MAX_READ_BYTES, MAX_WRITE_BYTES, MAX_FAP_BYTES } from './policy.js';
 
 const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v7 (firmware)';
+const APP_VERSION = '2026-11-08 · v8 (sauvegardes)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -547,7 +547,7 @@ const TOOLS = {
     check: (a) => {
       if (typeof a.job !== 'string' || !/^[a-f0-9]{32}$/.test(a.job)) throw new Error('tâche invalide');
       if (typeof a.dir !== 'string' || !FW_NAME.test(a.dir)) throw new Error('dossier de mise à jour invalide');
-      if (!['Officiel', 'Momentum'].includes(a.label)) throw new Error('firmware non autorisé');
+      if (!['Officiel', 'Unleashed', 'Momentum'].includes(a.label)) throw new Error('firmware non autorisé');
       if (typeof a.version !== 'string' || !/^[\w.+-]{1,64}$/.test(a.version)) throw new Error('version invalide');
       if (!Array.isArray(a.files) || !a.files.length || a.files.length > 64) throw new Error('liste de fichiers invalide');
       let total = 0;
@@ -567,6 +567,53 @@ const TOOLS = {
       + '\n\nCopie dans /ext/update/' + a.dir + '/ :\n' + a.files.map((f) => '  ' + f.name + ' (' + Math.ceil(f.size / 1024) + ' Ko)').join('\n')
       + '\n\nEnsuite : redémarrage, installation automatique, reconnexion de l\'app.',
     run: (a) => installFirmware(a),
+  },
+  restore_files: {
+    // Appelé seulement par le serveur (backup action=restore) : une validation pour tout le lot.
+    level: 'write',
+    check: (a) => {
+      if (typeof a.job !== 'string' || !/^[a-f0-9]{32}$/.test(a.job)) throw new Error('tâche invalide');
+      a.dest = checkRestoreDest(a.dest);
+      if (typeof a.name !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(a.name)) throw new Error('nom de sauvegarde invalide');
+      if (!Array.isArray(a.files) || !a.files.length || a.files.length > 3000) throw new Error('liste de fichiers invalide');
+      let total = 0;
+      for (const f of a.files) {
+        if (!f || typeof f.path !== 'string' || !Number.isInteger(f.size) || f.size < 0 || f.size > MAX_FAP_BYTES || !/^[a-f0-9]{64}$/.test(f.sha256 || '')) throw new Error('fichier invalide');
+        normPath(a.dest + '/' + f.path); // refuse « .. », segments vides, caractères interdits
+        total += f.size;
+      }
+      if (total > 32 * 1048576) throw new Error('sauvegarde trop grosse');
+    },
+    describe: (a) => 'restaurer la sauvegarde ' + a.name + ' dans ' + a.dest + ' (' + a.files.length + ' fichiers, ' + Math.ceil(a.files.reduce((s, f) => s + f.size, 0) / 1024) + ' Ko)',
+    preview: async (a) => 'Sauvegarde du ' + (typeof a.created === 'string' ? a.created.slice(0, 16).replace('T', ' ') : '?') + ' (VPS)\n'
+      + 'Les fichiers du même nom seront remplacés dans ' + a.dest + '.\n\n'
+      + a.files.slice(0, 40).map((f) => '  ' + f.path + ' (' + Math.ceil(f.size / 1024) + ' Ko)').join('\n')
+      + (a.files.length > 40 ? '\n  … et ' + (a.files.length - 40) + ' autres' : ''),
+    run: async (a) => {
+      const base = vpsHttpBase();
+      if (!base) throw new Error('adresse du VPS inconnue');
+      const total = a.files.reduce((s, f) => s + f.size, 0) || 1;
+      let done = 0;
+      const dirs = new Set();
+      try {
+        for (const f of a.files) {
+          const path = a.dest + '/' + f.path;
+          const res = await fetch(base + '/bk/' + a.job + '/' + encodeURIComponent(f.path), { cache: 'no-store' });
+          if (!res.ok) throw new Error('téléchargement de ' + f.path + ' : HTTP ' + res.status);
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          if (bytes.length !== f.size || hex(await crypto.subtle.digest('SHA-256', bytes)) !== f.sha256) throw new Error(f.path + ' : contenu incorrect');
+          const parent = parentOf(path);
+          if (!dirs.has(parent)) { await flipper.mkdirs(parent); dirs.add(parent); }
+          await flipper.write(path, bytes);
+          done += f.size;
+          setFwBar(Math.floor((done / total) * 100), 'Restauration ' + a.name + ' : ' + Math.floor((done / total) * 100) + ' %');
+        }
+      } finally {
+        setFwBar(null);
+      }
+      log('Sauvegarde ' + a.name + ' restaurée : ' + a.files.length + ' fichiers', 'ok');
+      return { restored: a.files.length, dest: a.dest };
+    },
   },
   start_app: {
     // Lancer un .fap = exécuter du code (souvent écrit par un modèle) : niveau Exécution.
