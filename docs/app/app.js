@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v3 (page qui défile)';
+const APP_VERSION = '2026-11-08 · v4 (une main)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -64,7 +64,11 @@ function selectTab(name, { focus = false } = {}) {
     $('panel-' + t).hidden = !on;
   }
   if (focus) $('tab-' + name).focus();
-  if (name === 'chat') { chatUnread = 0; renderBadge(); requestAnimationFrame(() => scrollChat()); }
+  if (name === 'chat') {
+    chatUnread = 0; renderBadge();
+    const hasMsgs = (chat.histories[chat.current] || []).length > 0;
+    requestAnimationFrame(() => (hasMsgs ? scrollChat() : window.scrollTo(0, 0)));
+  }
   else scroller.scrollTop = 0;
   // En quittant Apprendre, revenir à la liste (le détail ne doit pas rester ouvert au retour).
   if (name !== 'learn' && typeof $('learnDetail') !== 'undefined' && !$('learnDetail').hidden) {
@@ -161,6 +165,9 @@ function render() {
   $('deviceName').textContent = connected ? flipper.name : '';
   document.body.classList.toggle('connected', connected);
   $('other').disabled = connected;
+  $('padConnect').hidden = connected;
+  $('padConnect').disabled = !!busy;
+  $('padConnect').textContent = busy || (flipper.device ? 'Reconnecter le Flipper' : 'Connecter le Flipper');
   for (const b of document.querySelectorAll('[data-key]')) b.disabled = !connected;
   $('aboutServer').textContent = serverCommit ? 'commit ' + serverCommit : '—';
   chatControls();
@@ -249,12 +256,16 @@ async function connectFlow() {
   }
 }
 
-$('main').addEventListener('click', () => {
-  if (flipper.connected) { wantConnected = false; flipper.disconnect(); return; }
+function startConnect() {
   // requestDevice doit partir directement du tap : pas d'await avant pick().
   const picking = flipper.device ? Promise.resolve() : flipper.pick();
   withBusy('Connexion…', async () => { await picking; await connectFlow(); });
+}
+$('main').addEventListener('click', () => {
+  if (flipper.connected) { wantConnected = false; flipper.disconnect(); return; }
+  startConnect();
 });
+$('padConnect').addEventListener('click', () => { if (!flipper.connected) startConnect(); });
 
 $('other').addEventListener('click', () => {
   const picking = flipper.pick({ all: true });
@@ -704,7 +715,26 @@ function chatControls() {
   $('chatReset').disabled = !online || !!chat.live || !chat.current;
   for (const r of document.querySelectorAll('#chatModels input')) r.disabled = !!chat.live;
   $('chatText').placeholder = online ? 'Demande au modèle…' : 'VPS non connecté';
+  const cur = chat.models.find((m) => m.id === chat.current);
+  const short = (m) => (m ? m.label.split(' ')[0] : '');
+  const next = chat.models.length > 1 ? chat.models[(chat.models.indexOf(cur) + 1) % chat.models.length] : null;
+  const chip = $('modelChip');
+  chip.hidden = !cur;
+  chip.textContent = short(cur);
+  chip.disabled = !!chat.live || !next;
+  chip.setAttribute('aria-label', 'Modèle : ' + short(cur) + (next ? '. Toucher pour passer à ' + short(next) : ''));
+  $('chatWho').textContent = cur ? 'Conversation avec ' + cur.label : '';
 }
+
+$('modelChip').addEventListener('click', () => {
+  const inputs = [...document.querySelectorAll('#chatModels input')];
+  const i = inputs.findIndex((r) => r.checked);
+  const nxt = inputs[(i + 1) % inputs.length];
+  if (!nxt || chat.live) return;
+  nxt.checked = true;
+  nxt.dispatchEvent(new Event('change'));
+  announce('Modèle : ' + $('modelChip').textContent);
+});
 
 // ---------- Défilement ----------
 // C'est la PAGE qui défile (plein écran Bluefy et « tirer pour actualiser » marchent).
@@ -742,6 +772,8 @@ $('toBottom').addEventListener('click', scrollChat);
   if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
   addEventListener('resize', fit);
   new ResizeObserver(fit).observe(document.querySelector('.composer-bar'));
+  new ResizeObserver(() => root.setProperty('--head-h', document.querySelector('.head').offsetHeight + 'px'))
+    .observe(document.querySelector('.head'));
   window.__fitBars = fit;
 }
 
