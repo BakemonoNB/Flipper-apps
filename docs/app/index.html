@@ -23,7 +23,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   [hidden] { display: none !important; }
-  html { font: -apple-system-body; }
+  html { font: -apple-system-body; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  /* iOS zoome sur tout champ en dessous de 16 px : on ne descend jamais sous 16 px (sans bloquer le zoom à deux doigts). */
+  input, textarea, select { font-size: max(16px, 1em) !important; }
   /* Coque fixe : haut (barre + écran) et bas (saisie + onglets) ne bougent jamais, seul le milieu défile. */
   html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
   body {
