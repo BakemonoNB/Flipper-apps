@@ -120,7 +120,8 @@ export function createBridge({ phoneToken, commit, log, callTimeoutMs = 120000, 
       pending.set(id, { ws, resolve, reject, timer });
       const from = typeof origin === 'string' && ORIGIN.test(origin) ? origin : 'api';
       ws.send(JSON.stringify({ type: 'call', id, tool, args, origin: from }));
-      log('INFO', 'appel ' + id + ' -> téléphone : ' + tool + ' (' + from + ')');
+      // Lectures en rafale (sauvegarde : des centaines) : pas journalisées, elles videraient le journal.
+      if (tool !== 'read_file' && tool !== 'list_files') log('INFO', 'appel ' + id + ' -> téléphone : ' + tool + ' (' + from + ')');
     });
   }
 

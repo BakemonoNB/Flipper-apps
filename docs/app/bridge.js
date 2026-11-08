@@ -1,6 +1,6 @@
 // Client WebSocket vers le pont du VPS (server/ dans ce repo).
 // Évènements : 'status' (detail: statut), 'call' (detail: {id, tool, args, origin}),
-// 'message' (detail: welcome, chat_event ou chat_history, voir server/chat.js).
+// 'message' (detail: welcome, chat_event, chat_history, progress ou notice ; voir server/chat.js, server/index.js).
 // Statuts : off (non configuré), connecting, online, refused (jeton refusé), replaced, offline.
 
 const MAX_BACKOFF_MS = 30000;
@@ -46,7 +46,7 @@ export class BridgeClient extends EventTarget {
         this.backoff = 1000;
         this._set('online');
         this.dispatchEvent(new CustomEvent('message', { detail: msg }));
-      } else if (msg.type === 'chat_event' || msg.type === 'chat_history') {
+      } else if (['chat_event', 'chat_history', 'progress', 'notice'].includes(msg.type)) {
         this.dispatchEvent(new CustomEvent('message', { detail: msg }));
       } else if (msg.type === 'call' && Number.isInteger(msg.id) && typeof msg.tool === 'string') {
         this.dispatchEvent(new CustomEvent('call', { detail: { id: msg.id, tool: msg.tool, args: msg.args || {}, origin: typeof msg.origin === 'string' ? msg.origin : 'api' } }));

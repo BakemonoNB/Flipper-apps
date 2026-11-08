@@ -68,3 +68,28 @@ test('sauvegarde : refus (hors carte SD, dossier absent, nom inconnu, action inc
     assert.match((await bk.run({ action: 'zip' })).error, /action/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('sauvegarde : survit à une coupure du téléphone (même lecture refaite)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bk-'));
+  try {
+    let cuts = 2;
+    const reads = [];
+    const callPhone = async (tool, args) => {
+      if (tool === 'read_file' && args.path.endsWith('frame_0.bm') && cuts-- > 0) {
+        throw new Error(cuts ? 'téléphone déconnecté pendant l\'appel' : 'téléphone non connecté');
+      }
+      if (tool === 'list_files') return { ok: true, result: { entries: FS[args.path], truncated: false } };
+      reads.push(args.path);
+      const v = FILES[args.path];
+      return Buffer.isBuffer(v) ? { ok: true, result: { base64: v.toString('base64') } } : { ok: true, result: { text: v } };
+    };
+    const msgs = [];
+    const bk = createBackups({ dir, log: () => {}, callPhone, progress: (t) => msgs.push(t), RETRY_MS: 5 });
+    const s = await bk.run({ action: 'save', path: '/ext/dolphin' }, 'claude');
+    assert.equal(s.ok, true, s.error);
+    assert.equal(s.result.files, 3);
+    assert.ok(msgs.some((m) => m && /reprise/.test(m)));
+    const bk2 = createBackups({ dir: join(dir, 'autre'), log: () => {}, RETRY_MS: 5, RECONNECT_MS: 20, callPhone: async () => { throw new Error('téléphone non connecté'); } });
+    assert.match((await bk2.run({ action: 'save', path: '/ext/dolphin' })).error, /interrompue.*non connecté/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

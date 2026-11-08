@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v9 (tâches de fond)';
+const APP_VERSION = '2026-11-08 · v10 (progression)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';

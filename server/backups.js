@@ -17,14 +17,36 @@ const segOk = (s) => typeof s === 'string' && s.length > 0 && s.length <= 128 &&
 const relOk = (rel) => typeof rel === 'string' && rel.split('/').every(segOk);
 
 // progress(texte, pourcentage | null) : affiché sur le téléphone pendant une sauvegarde (null, null : fin).
-export function createBackups({ dir, log, callPhone, progress = () => {}, now = () => new Date() }) {
+export function createBackups({ dir, log, callPhone, progress = () => {}, now = () => new Date(), RECONNECT_MS = 180000, RETRY_MS = 3000 }) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const jobs = new Map(); // id -> { at, root, files: Map(rel -> abs) }
 
+  // Appel au téléphone qui survit aux coupures du WebSocket (5G, app brièvement en arrière-plan) : on attend
+  // le retour du téléphone et on refait la même lecture, jusqu'à 3 min sans réponse.
   async function phone(tool, args, origin) {
-    const r = await callPhone(tool, args, origin);
-    if (!r || r.ok === false) throw new Error(tool + ' ' + (args.path || '') + ' : ' + ((r && r.error) || 'échec'));
-    return r.result;
+    const until = Date.now() + RECONNECT_MS;
+    for (;;) {
+      let r;
+      try {
+        r = await callPhone(tool, args, origin);
+      } catch (e) {
+        if (!/déconnecté|non connecté|pas de réponse/.test(e.message) || Date.now() > until) throw e;
+        progress('Connexion au téléphone coupée : reprise dès son retour…', null);
+        await new Promise((s) => setTimeout(s, RETRY_MS));
+        continue;
+      }
+      if (!r || r.ok === false) {
+        const err = (r && r.error) || 'échec';
+        // Le Flipper a décroché du téléphone (Bluetooth) : même attente.
+        if (/Flipper non connecté|déconnecté/.test(err) && Date.now() <= until) {
+          progress('Flipper déconnecté : reprise dès sa reconnexion…', null);
+          await new Promise((s) => setTimeout(s, RETRY_MS));
+          continue;
+        }
+        throw new Error(tool + ' ' + (args.path || '') + ' : ' + err);
+      }
+      return r.result;
+    }
   }
 
   async function save(a, origin) {
