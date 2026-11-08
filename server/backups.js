@@ -16,7 +16,8 @@ const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 const segOk = (s) => typeof s === 'string' && s.length > 0 && s.length <= 128 && s !== '.' && s !== '..' && !/[\u0000-\u001f/\\]/.test(s);
 const relOk = (rel) => typeof rel === 'string' && rel.split('/').every(segOk);
 
-export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
+// progress(texte, pourcentage | null) : affiché sur le téléphone pendant une sauvegarde (null, null : fin).
+export function createBackups({ dir, log, callPhone, progress = () => {}, now = () => new Date() }) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const jobs = new Map(); // id -> { at, root, files: Map(rel -> abs) }
 
@@ -36,6 +37,8 @@ export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
     const files = [];
     let total = 0;
     const queue = [{ path: src, rel: '', depth: 0 }];
+    let lastTick = 0;
+    progress('Sauvegarde de ' + src + ' : lecture…', null);
     try {
       while (queue.length) {
         const d = queue.shift();
@@ -59,12 +62,15 @@ export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
           mkdirSync(dirname(abs), { recursive: true, mode: 0o700 });
           writeFileSync(abs, data, { mode: 0o600 });
           files.push({ path: rel, size: data.length, sha256: sha256(data) });
+          if (Date.now() - lastTick > 1000) { lastTick = Date.now(); progress('Sauvegarde de ' + src + ' : ' + files.length + ' fichiers lus', null); }
         }
       }
     } catch (e) {
+      progress(null, null);
       rmSync(root, { recursive: true, force: true }); // pas de sauvegarde à moitié faite
       return { ok: false, error: 'sauvegarde interrompue (' + files.length + ' fichiers lus) : ' + e.message };
     }
+    progress(null, null);
     const manifest = { name, source: src, created: now().toISOString(), files };
     mkdirSync(root, { recursive: true, mode: 0o700 });
     writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 1), { mode: 0o600 });
@@ -97,6 +103,15 @@ export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
     return callPhone('restore_files', { job: id, name: m.name, dest: m.source, created: m.created, files: m.files }, origin, { timeoutMs: JOB_TTL });
   }
 
+  // Vérification immédiate (avant de lancer la tâche de fond) : message d'erreur, ou null.
+  function check(args) {
+    const a = args && typeof args === 'object' ? args : {};
+    if (a.action === 'save') return typeof a.path === 'string' && /^\/ext(\/|$)/i.test(a.path) ? null : 'path : un dossier de la carte SD, ex. /ext/dolphin';
+    if (a.action === 'restore') return manifestOf(a.name) ? null : 'sauvegarde inconnue (backup action=list)';
+    if (a.action === 'list') return null;
+    return 'action : save (path), list, restore (name)';
+  }
+
   async function run(args, origin) {
     const a = args && typeof args === 'object' ? args : {};
     if (a.action === 'save') return save(a, origin);
@@ -122,5 +137,5 @@ export function createBackups({ dir, log, callPhone, now = () => new Date() }) {
     res.end(data);
   }
 
-  return { run, serve };
+  return { run, serve, check };
 }

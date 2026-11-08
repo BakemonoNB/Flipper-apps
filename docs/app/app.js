@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v8 (sauvegardes)';
+const APP_VERSION = '2026-11-08 · v9 (tâches de fond)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -746,13 +746,15 @@ async function readFirmware() {
 }
 
 // Barre de progression (copie d'un firmware) sous l'écran du Flipper. pct = null : cachée.
+// pct = -1 : durée inconnue (barre animée).
 function setFwBar(pct, text) {
   const bar = $('fwBar');
   bar.hidden = pct === null;
   if (pct === null) return;
-  bar.querySelector('.fw-fill').style.width = pct + '%';
+  bar.classList.toggle('indeterminate', pct < 0);
+  bar.querySelector('.fw-fill').style.width = (pct < 0 ? 100 : pct) + '%';
   bar.querySelector('.fw-text').textContent = text;
-  bar.setAttribute('aria-valuenow', String(pct));
+  if (pct < 0) bar.removeAttribute('aria-valuenow'); else bar.setAttribute('aria-valuenow', String(pct));
 }
 const fmtDur = (s) => (s < 90 ? Math.max(1, Math.round(s)) + ' s' : Math.round(s / 60) + ' min');
 const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -1162,7 +1164,7 @@ function renderChat() {
     if (it.role === 'tool') { if (!acts.length) actsKey = i; acts.push(it.text); return; }
     flushActs();
     const d = document.createElement('div');
-    const role = ['user', 'assistant', 'error'].includes(it.role) ? it.role : 'assistant';
+    const role = ['user', 'assistant', 'error', 'notice'].includes(it.role) ? it.role : 'assistant';
     d.className = 'msg ' + role;
     if (role === 'assistant') renderMarkdown(d, it.text); else d.textContent = it.text;
     box.appendChild(d);
@@ -1224,6 +1226,13 @@ bridge.addEventListener('message', (e) => {
     if (chat.live && chat.live.model === m.model) return; // réponse en cours : on garde l'affichage local
     chat.histories[m.model] = (m.items || []).map((it) => ({ role: it.role, text: it.text }));
     if (m.model === chat.current) { renderChat(); if (currentTab === 'chat') scrollChat(); }
+  } else if (m.type === 'progress') {
+    // Progression d'une tâche de fond du VPS (ex. sauvegarde) : text null = fin.
+    if (m.text == null) setFwBar(null);
+    else setFwBar(Number.isFinite(m.pct) ? Math.max(0, Math.min(100, m.pct)) : -1, String(m.text).slice(0, 120));
+  } else if (m.type === 'notice') {
+    log(String(m.text || '').slice(0, 600), m.ok ? 'ok' : 'err');
+    announce(String(m.text || '').slice(0, 200));
   } else if (m.type === 'chat_event') {
     const wasNear = nearBottom();
     if (m.event === 'text') {
@@ -1243,6 +1252,10 @@ bridge.addEventListener('message', (e) => {
       log((ORIGINS[m.model] || m.model) + ' utilise ' + m.tool);
     } else if (m.event === 'error') {
       pushChat(m.model, 'error', m.error || 'erreur');
+    } else if (m.event === 'notice') {
+      // Fin d'une tâche de fond (sauvegarde, firmware…) lancée par ce modèle.
+      pushChat(m.model, 'notice', m.text || '');
+      if (currentTab !== 'chat') { chatUnread++; renderBadge(); }
     }
     if (m.event === 'done' || m.event === 'error') {
       if (chat.live && chat.live.id === m.id) chat.live = null;

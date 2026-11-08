@@ -25,6 +25,7 @@ import { createCatalog } from './catalog.js';
 import { createGithub } from './github.js';
 import { createFirmware } from './firmware.js';
 import { createBackups } from './backups.js';
+import { createJobs } from './jobs.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -84,6 +85,13 @@ const github = createGithub({ build: (a, meta) => builds.build(a, meta), log });
 const firmware = createFirmware({ log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts),
   indexes: { official: process.env.FW_INDEX_OFFICIAL, momentum: process.env.FW_INDEX_MOMENTUM, unleashed: process.env.FW_INDEX_UNLEASHED } });
 let backups = null; // créé une fois STATE_DIR connu (plus bas)
+// Tâches longues en fond : le résultat va dans le chat (bulle) et au modèle qui l'a lancée, à son prochain message.
+const jobs = createJobs({ log, onDone: (j) => {
+  bridge.send({ type: 'progress', text: null, pct: null });
+  bridge.send({ type: 'notice', text: j.text, ok: j.ok });
+  chat.notice(j.origin, j.text);
+} });
+const phoneOnline = () => !!bridge.status().phone;
 const INTERNAL_TOOLS = new Set(['install_fap', 'install_firmware']);
 export async function callTool(name, args, origin) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
@@ -94,8 +102,20 @@ export async function callTool(name, args, origin) {
   if (name === 'install_catalog_app') return catalog.install(a, origin);
   if (name === 'build_app') return builds.build(args);
   if (name === 'github_build') return github.build(a);
-  if (name === 'update_firmware') return firmware.update(a, origin);
-  if (name === 'backup') return backups.run(a, origin);
+  if (name === 'update_firmware') {
+    const fw = String(a.firmware || '').toLowerCase();
+    if (!['official', 'unleashed', 'momentum'].includes(fw)) return { ok: false, error: 'firmware : official, unleashed ou momentum (aucune autre source)' };
+    if (a.channel !== undefined && !['release', 'rc', 'development'].includes(a.channel)) return { ok: false, error: 'channel : release, rc ou development' };
+    if (!phoneOnline()) return { ok: false, error: 'téléphone non connecté' };
+    return jobs.start('Installation du firmware ' + fw, origin, () => firmware.update(a, origin));
+  }
+  if (name === 'backup') {
+    const err = backups.check(a);
+    if (err) return { ok: false, error: err };
+    if (a.action === 'list') return backups.run(a, origin);
+    if (!phoneOnline()) return { ok: false, error: 'téléphone non connecté' };
+    return jobs.start(a.action === 'save' ? 'Sauvegarde de ' + a.path : 'Restauration de ' + a.name, origin, () => backups.run(a, origin));
+  }
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
   return bridge.call(name, args, origin);
@@ -114,7 +134,8 @@ const STATE_DIR = (() => {
   }
 })();
 
-backups = createBackups({ dir: join(STATE_DIR, 'backups'), log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+backups = createBackups({ dir: join(STATE_DIR, 'backups'), log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts),
+  progress: (text, pct) => bridge.send({ type: 'progress', text, pct }) });
 
 // Configuration MCP pour Claude : seul le serveur Flipper, qui appelle l'API locale avec API_TOKEN.
 const mcpConfigPath = join(STATE_DIR, 'mcp-flipper.json');

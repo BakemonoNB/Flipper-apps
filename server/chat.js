@@ -16,6 +16,9 @@ const MAX_HISTORY = 100;     // entrées affichées par modèle
 const MAX_OLLAMA_MSGS = 24;  // messages gardés dans le contexte de gpt-oss
 
 // workDir : dossier de travail de Claude (documentation lisible avec Read : CLAUDE.md, types du SDK JS).
+// Un tour de Claude peut enchaîner captures, compilations et corrections : 10 min max.
+const CLAUDE_TIMEOUT_MS = 600000;
+
 export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, ollamaThink = 'medium', stateDir, workDir, mcpConfigPath,
   claudeBin, ollamaUrl, ollamaNumCtx, log, sendToPhone, callTool, contextLine = () => '' }) {
   // contextLine : ligne ajoutée au prompt à chaque message (ex. firmware actuel lu par le téléphone).
@@ -26,6 +29,8 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
   try { state = JSON.parse(readFileSync(file, 'utf8')); } catch { /* premier démarrage */ }
   if (!state.conversations) state.conversations = {};
   let busy = null;
+  // Résultats de tâches de fond à donner au modèle à son prochain message (par modèle).
+  const pending = {};
 
   const conv = (model) => {
     if (!state.conversations[model]) state.conversations[model] = { history: [], claudeSession: null, ollamaMessages: [] };
@@ -74,6 +79,9 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
     busy = id;
     const c = conv(model);
     record(c, 'user', text);
+    const notes = pending[model] || [];
+    delete pending[model];
+    const modelText = notes.length ? '[Résultats de tâches de fond terminées depuis ton dernier message : ' + notes.join(' | ') + ']\n\n' + text : text;
     let answer = '';
     const onEvent = (ev) => {
       if (ev.event === 'text') answer += ev.text;
@@ -90,19 +98,21 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
       if (m.kind === 'claude') {
         try {
           const r = await runClaude({
-            bin: claudeBin, model: m.model, text, sessionId: c.claudeSession, systemPrompt: withContext(systemPrompt), mcpConfigPath,
+            bin: claudeBin, model: m.model, text: modelText, sessionId: c.claudeSession, timeoutMs: CLAUDE_TIMEOUT_MS, systemPrompt: withContext(systemPrompt), mcpConfigPath,
             toolNames: toolNames(), cwd: workDir, onEvent,
           });
           c.claudeSession = r.sessionId;
         } catch (e) {
-          c.claudeSession = null; // session peut-être perdue : la prochaine repart de zéro
+          // Délai dépassé : la session est enregistrée au fil de l'eau, on la garde (sinon Claude oublie tout).
+          // Autre échec (session illisible…) : la prochaine repart de zéro.
+          if (!/n'a pas répondu/.test(e.message)) c.claudeSession = null;
           throw e;
         }
       } else {
         const snapshot = c.ollamaMessages.map((m) => ({ ...m }));
         try {
           await runOllama({
-            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, think: ollamaThink, systemPrompt: withContext(ollamaPrompt), messages: c.ollamaMessages, text,
+            url: ollamaUrl, model: m.model, numCtx: ollamaNumCtx, think: ollamaThink, systemPrompt: withContext(ollamaPrompt), messages: c.ollamaMessages, text: modelText,
             tools: ollamaTools(), callTool: (name, args) => callForText(name, args, model), onEvent,
           });
         } catch (e) {
@@ -126,6 +136,15 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
     }
   }
 
+  // Fin d'une tâche de fond lancée par ce modèle : bulle dans le chat + note pour son prochain message.
+  function notice(model, text) {
+    if (!Object.hasOwn(models, model)) return;
+    record(conv(model), 'notice', text);
+    (pending[model] = pending[model] || []).push(String(text).slice(0, 600));
+    sendToPhone({ type: 'chat_event', id: 'notice', model, event: 'notice', text });
+    save();
+  }
+
   function reset(model) {
     if (!Object.hasOwn(models, model)) return;
     state.conversations[model] = { history: [], claudeSession: null, ollamaMessages: [] };
@@ -134,5 +153,5 @@ export function createChat({ models, systemPrompt, ollamaPrompt = systemPrompt, 
     log('INFO', 'chat ' + model + ' : nouvelle conversation');
   }
 
-  return { handle, reset, list, histories };
+  return { handle, reset, list, histories, notice };
 }

@@ -149,6 +149,9 @@
   .screen-card { flex: none; }
   .fw-bar { position: relative; margin-top: 8px; height: 30px; border-radius: 10px; background: var(--surface); border: 1px solid var(--accent); overflow: hidden; }
   .fw-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); opacity: .35; transition: width .4s; }
+  .fw-bar.indeterminate .fw-fill { animation: fwpulse 1.4s ease-in-out infinite; }
+  @keyframes fwpulse { 0%, 100% { opacity: .15; } 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .fw-bar.indeterminate .fw-fill { animation: none; opacity: .3; } }
   .fw-text { position: relative; display: block; text-align: center; line-height: 28px; font-size: .78em; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
 
   /* Panneaux */
@@ -196,6 +199,8 @@
   .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 6px; }
   .msg.tool { align-self: flex-start; color: var(--muted); font: .78em/1.35 ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 10px; padding: 4px 9px; }
   .msg.error { align-self: flex-start; color: var(--err); font-size: .9em; background: transparent; padding: 2px 4px; }
+  .msg.notice { align-self: center; max-width: 94%; font-size: .85em; color: var(--fg); background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 12px; padding: 8px 12px; }
+  .msg.notice::before { content: 'Tâche terminée · '; font-weight: 800; color: var(--accent); }
   .msg.assistant { white-space: normal; max-width: 94%; }
   .msg p { margin: 0 0 .5em; } .msg p:last-child { margin-bottom: 0; }
   .msg ul, .msg ol { margin: .3em 0 .5em; padding-left: 1.3em; } .msg li + li { margin-top: .2em; }
