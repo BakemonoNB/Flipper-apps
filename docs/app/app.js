@@ -8,7 +8,7 @@ const flipper = new Flipper();
 const bridge = new BridgeClient();
 
 // À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
-const APP_VERSION = '2026-11-08 · v10 (progression)';
+const APP_VERSION = '2026-11-08 · v11 (liaison auto-réparée)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -285,6 +285,13 @@ flipper.addEventListener('disconnected', () => {
   if (wantConnected) autoReconnect();
 });
 flipper.addEventListener('error', (e) => log('Erreur de flux : ' + errText(e.detail), 'err'));
+// Deux réponses perdues d'affilée : liaison décalée ou bloquée. On reconnecte (remise à zéro des deux côtés).
+flipper.addEventListener('stuck', () => {
+  if (!flipper.connected || !wantConnected) return;
+  log('Le Flipper ne répond plus : reconnexion automatique…', 'err');
+  flipper.timeouts = 0;
+  flipper.disconnect();
+});
 flipper.addEventListener('notice', (e) => log('Bluetooth : ' + e.detail, 'err'));
 flipper.addEventListener('unsolicited', (e) => {
   const st = e.detail.fields.find((f) => f.field === 2);

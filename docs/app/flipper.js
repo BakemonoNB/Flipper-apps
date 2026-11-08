@@ -39,6 +39,8 @@ export const UPDATE_CODES = {
   7: 'paquet pour un autre modèle de Flipper', 8: 'manifeste trop ancien', 9: 'mémoire interne pleine', 10: 'erreur non précisée',
 };
 
+// Au-delà, une longueur de message lue est forcément fausse (réponses ≤ 1 Ko environ) : flux désynchronisé.
+const MAX_MSG = 16 * 1024;
 // Taille des données par message d'écriture de fichier (comme qFlipper).
 const FILE_CHUNK = 512;
 const utf8 = (s) => new TextEncoder().encode(s);
@@ -203,6 +205,7 @@ export class Flipper extends EventTarget {
       for (const r of w) r();
     };
     this.buf = new Uint8Array(0);
+    this.timeouts = 0; // réponses perdues d'affilée
     this.nextId = 1;
     this.pending = new Map();
     this.writeChain = Promise.resolve();
@@ -284,6 +287,10 @@ export class Flipper extends EventTarget {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // Réponse perdue : le flux reçu est peut-être décalé (octets perdus en Bluetooth). On jette le reste
+        // en cours ; après deux silences de suite, l'app reconnecte (remet à zéro les deux côtés).
+        this.buf = new Uint8Array(0);
+        if (++this.timeouts >= 2) this.dispatchEvent(new CustomEvent('stuck', { detail: { field } }));
         reject(new Error('Pas de réponse du Flipper (commande ' + field + ')'));
       }, timeout);
       this.pending.set(id, {
@@ -590,6 +597,7 @@ export class Flipper extends EventTarget {
     try {
       for (;;) {
         const lv = readVarint(this.buf, 0);
+        if (lv && lv[0] > MAX_MSG) throw new Error('message annoncé de ' + lv[0] + ' octets : flux désynchronisé, remis à zéro');
         if (!lv || this.buf.length < lv[1] + lv[0]) return;
         const msg = this.buf.slice(lv[1], lv[1] + lv[0]);
         this.buf = this.buf.slice(lv[1] + lv[0]);
@@ -606,8 +614,10 @@ export class Flipper extends EventTarget {
     if (frame) {
       const ff = decodeFields(frame.bytes);
       const data = getField(ff, 1);
-      if (data && data.bytes.length >= SCREEN_W * SCREEN_H / 8) {
+      if (data && data.bytes.length === SCREEN_W * SCREEN_H / 8) {
         this.dispatchEvent(new CustomEvent('screen', { detail: { data: data.bytes, orientation: getValue(ff, 2) } }));
+      } else {
+        this.buf = new Uint8Array(0); // image de taille fausse : flux décalé, on ne l'affiche pas
       }
       return;
     }
@@ -617,6 +627,7 @@ export class Flipper extends EventTarget {
       this.dispatchEvent(new CustomEvent('unsolicited', { detail: { id, fields } }));
       return;
     }
+    this.timeouts = 0;
     p.parts.push(fields);
     const status = getValue(fields, F.commandStatus);
     if (status !== 0) {
