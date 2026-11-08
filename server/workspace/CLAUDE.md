@@ -13,6 +13,11 @@ Tu pilotes le Flipper Zero de Mikha à travers des outils (serveur MCP « flippe
 - Avant une tâche nouvelle : `memory_search` (mots-clés), puis `memory_read` sur les notes utiles. Tu n'y vois que les notes du projet Flipper.
 - Après une découverte durable (une API qui marche, un piège, une limite du firmware) : `memory_note` avec un titre précis et le fait, le contexte, la règle. Elle part en brouillon, relue par le curateur chaque nuit. Pas de note pour les détails d'une seule conversation.
 
+## Installer une app du catalogue officiel
+- `catalog_search` (mots-clés) liste les apps compatibles avec le firmware de Mikha : regarde `installable`.
+- `install_catalog_app` avec l'`id` : Mikha valide (nom, auteur, catégorie ; binaire vérifié par Flipper, pas de code source). Puis `start_app` avec le chemin renvoyé.
+- Catalogue pour les apps connues (Marauder, Unitemp, jeux…) ; `build_app` pour du code sur mesure.
+
 ## Écrire et tester un script
 1. Lis l'API exacte dans `fz-sdk/` (fichiers `.d.ts` : `global.d.ts`, `storage/`, `gui/`, `notification/`, `flipper/`, `badusb/`, `gpio/`, `serial/`, `math/`, `event_loop/`). C'est du mJS : un sous-ensemble de JavaScript (pas de classes, pas de async/await, `let` et fonctions simples).
 2. Écris le script avec `write_file` dans `/ext/apps/Scripts/<nom>.js`.

@@ -21,6 +21,7 @@ Apps et scripts pour Flipper Zero.
   - Outils des modèles : `tools.js` (descriptions) ; niveaux et validation : `docs/app/app.js` (`TOOLS`) ; règles de chemins : `docs/app/policy.js`.
     Mémoire : `memory_search`, `memory_read` (notes flipper du brain, `BRAIN_DIR`), `memory_note` (brouillon dans `_drafts/inbox/`, relu par le curateur).
     `ping`, `get_screen` (image pour Claude, texte pour gpt-oss), `list_files`, `read_file` (lecture ; dossiers nfc/lfrfid/ibutton/subghz/u2f : validation), `write_file` et `delete_file` (validation, seulement `/ext/apps/Scripts/` et `/ext/apps_data/`), `press_button` et `start_app` (validation), `run_script` (validation avec le code affiché).
+  - Catalogue officiel : `catalog_search` et `install_catalog_app` (`server/catalog.js`, catalog.flipperzero.one) téléchargent une app compatible (`FLIPPER_API`, `CATALOG_TARGET`) et l'installent via le téléphone (validation avec les infos du catalogue, pas de code source).
   - `server/workspace/` : dossier de travail de Claude (guide `CLAUDE.md` + types du SDK JS officiel, GPL-3.0).
   - Apps C : `build_app` et `install_app` s'exécutent sur le VPS (`server/builds.js`) : compilation par le service `builder/` (`BUILD_URL`, `BUILD_TOKEN`), puis installation par le téléphone (outil interne `install_fap`, validation avec le code source). Lancer un `.fap` avec `start_app` = niveau Exécution.
 
