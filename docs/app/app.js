@@ -1131,7 +1131,7 @@ $('ldCoach').addEventListener('click', () => {
 
 // ---------- Mise à jour de l'app ----------
 // GitHub Pages met les fichiers en cache 10 min : on les redemande au réseau, puis on recharge.
-const APP_FILES = ['./', './index.html', './app.js', './flipper.js', './bridge.js', './policy.js'];
+const APP_FILES = ['./', './index.html', './app.js', './flipper.js', './bridge.js', './policy.js', './learn.js'];
 $('updateApp').addEventListener('click', async () => {
   $('updateApp').disabled = true;
   $('updateApp').textContent = 'Mise à jour…';
