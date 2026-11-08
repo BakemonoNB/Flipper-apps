@@ -7,6 +7,8 @@ const $ = (id) => document.getElementById(id);
 const flipper = new Flipper();
 const bridge = new BridgeClient();
 
+// À changer à chaque version publiée : permet de vérifier laquelle tourne sur le téléphone.
+const APP_VERSION = '2026-11-08 · v3 (page qui défile)';
 const DEFAULT_VPS_URL = 'wss://nova.astrae.tech/flipper/ws';
 const SETTINGS_KEY = 'flipper-bridge';
 const CHAT_MODEL_KEY = 'flipper-chat-model';
@@ -1220,7 +1222,9 @@ renderAuto();
 }
 renderChat();
 renderLearn();
+$('aboutApp').textContent = APP_VERSION;
 render();
+log('Version de l\'app : ' + APP_VERSION);
 log(navigator.bluetooth ? 'Web Bluetooth disponible.' : 'Web Bluetooth absent : ouvre la page dans Bluefy.',
   navigator.bluetooth ? 'ok' : 'err');
 
