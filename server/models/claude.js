@@ -1,11 +1,14 @@
 // Lance Claude Code en mode non interactif (claude -p) et relaie ses évènements.
-// Seuls les outils Flipper (serveur MCP local) sont autorisés explicitement. La lecture de fichiers reste
+// Autorisés explicitement : les outils Flipper (serveur MCP local) et la recherche web (lecture seule). La lecture de fichiers reste
 // celle par défaut de Claude Code : limitée au dossier de travail (guide + types du SDK JS). Ne PAS ajouter
 // Read/Glob/Grep sans chemin : Claude pourrait lire /proc/self/environ (jeton OAuth) ou la config MCP (API_TOKEN).
 import { spawn } from 'node:child_process';
 
 const MCP_PREFIX = 'mcp__flipper__';
-const DENIED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Task'];
+// Web : recherche et lecture de pages (GitHub, docs). Une page peut contenir des instructions piégées :
+// les actions sur le Flipper restent validées sur le téléphone (hors mode autonome).
+const WEB_TOOLS = ['WebSearch', 'WebFetch'];
+const DENIED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Task'];
 
 // Environnement minimal : jamais PHONE_TOKEN, API_TOKEN ni LOGS_TOKEN. Claude Code refuse aujourd'hui de lire
 // /proc, mais c'est une protection interne qui peut changer : on ne lui donne simplement pas ces jetons.
@@ -22,7 +25,7 @@ export function claudeEnv(src = process.env) {
 // Résout {sessionId}. Rejette avec une Error lisible.
 export function runClaude({ bin = 'claude', model = '', text, sessionId = null, systemPrompt, mcpConfigPath,
   toolNames, cwd, timeoutMs = 300000, onEvent }) {
-  const allowed = toolNames.map((n) => MCP_PREFIX + n);
+  const allowed = toolNames.map((n) => MCP_PREFIX + n).concat(WEB_TOOLS);
   const args = [
     '-p',
     '--output-format', 'stream-json',
