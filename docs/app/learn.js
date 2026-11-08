@@ -143,9 +143,9 @@ MODULES.push({
   id: 'wifi',
   title: 'Wi-Fi : attaque et défense',
   icon: '◭',
-  needsEsp32: true,
+  hardware: 'Tu as le Wi-Fi DevBoard officiel Flipper (ESP32-S2) : il se clipse sur le connecteur du haut, sans câblage. Pour les fonctions Wi-Fi, il doit être flashé avec le firmware Marauder (voir l\'exercice). Le Flipper seul ne fait pas de Wi-Fi.',
   pitch: 'Comprendre les attaques Wi-Fi sur TON réseau, et t\'en protéger.',
-  what: 'Le Flipper Zero ne fait pas de Wi-Fi tout seul : sa radio ne couvre pas le 2,4 GHz. Avec une carte ESP32 (firmware Marauder) branchée sur ses broches, le Flipper devient l\'écran et le clavier de l\'ESP32, qui lui fait le travail Wi-Fi. Chaque attaque ci-dessous est expliquée avec sa parade. À faire uniquement sur un réseau qui t\'appartient.',
+  what: 'Le Flipper Zero ne fait pas de Wi-Fi tout seul : sa radio ne couvre pas le 2,4 GHz. Le Wi-Fi DevBoard (ESP32-S2) s\'en charge ; le Flipper lui sert d\'écran et de clavier et lui parle par le connecteur (UART). Le DevBoard sort d\'usine en firmware « Black Magic » (débogage) : il faut le flasher avec Marauder pour scanner et tester le Wi-Fi. Chaque attaque ci-dessous est expliquée avec sa parade. À faire uniquement sur un réseau qui t\'appartient.',
   pairs: [
     {
       attack: 'Scan et écoute',
@@ -169,12 +169,14 @@ MODULES.push({
     },
   ],
   steps: [
-    'Branche ton ESP32 (Marauder) sur les broches GPIO du Flipper, puis ouvre l\'app GPIO > Pont USB-UART, ou l\'app dédiée si tu en as une.',
-    'Lance un scan des réseaux et repère LE TIEN : note son canal et son chiffrement.',
+    'Clipse le Wi-Fi DevBoard sur le connecteur du haut du Flipper (une seule orientation possible).',
+    'Flashe Marauder si ce n\'est pas déjà fait : dans Chat, demande « installe l\'app ESP Flasher du catalogue », ouvre-la et flashe le firmware Marauder (ou utilise un flasher web sur PC). À sauter si ton DevBoard est déjà en Marauder.',
+    'Installe l\'app compagnon : demande « cherche l\'app Marauder dans le catalogue et installe-la », puis ouvre-la.',
+    'Lance un scan des réseaux (Scan AP) et repère LE TIEN : note son canal et son chiffrement.',
     'Appuie sur « Explique mon écran » : Claude te dit ce que chaque ligne signifie.',
     'Regarde ta box (page d\'admin, souvent 192.168.1.1) : vérifie WPA3 ou WPA2+PMF, et un mot de passe long.',
     'Pour chaque attaque ci-dessus, relis la parade et applique-la chez toi.',
   ],
   legal: 'Uniquement ton propre réseau, celui dont tu paies l\'abonnement. Scanner est en général toléré (tu ne fais qu\'écouter l\'air), mais un deauth, un faux point d\'accès ou une capture de poignée de main visant le réseau d\'un autre est une atteinte à un système de traitement automatisé de données (articles 323-1 et suivants du Code pénal). Le but ici est de sécuriser le tien.',
-  coach: 'comprendre l\'écran de mon ESP32 et sécuriser ma box Wi-Fi',
+  coach: 'comprendre l\'écran de mon Wi-Fi DevBoard (Marauder) et sécuriser ma box Wi-Fi',
 });

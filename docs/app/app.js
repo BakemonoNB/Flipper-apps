@@ -1080,8 +1080,8 @@ function openModule(id) {
   const ol = $('ldSteps');
   ol.textContent = '';
   for (const s of m.steps) { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); }
-  $('ldHardware').hidden = !m.needsEsp32;
-  $('ldHardware').textContent = m.needsEsp32 ? 'Nécessite une carte ESP32 (Marauder) branchée sur le Flipper. Le Flipper seul ne fait pas de Wi-Fi.' : '';
+  $('ldHardware').hidden = !m.hardware;
+  $('ldHardware').textContent = m.hardware || '';
   const pairsBox = $('ldPairs');
   pairsBox.textContent = '';
   for (const pr of m.pairs || []) {
