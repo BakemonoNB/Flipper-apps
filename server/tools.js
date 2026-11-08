@@ -78,6 +78,18 @@ export const TOOLS = [
     }, ['files']),
   },
   {
+    name: 'github_build',
+    description: 'Compile une app C d\'un dépôt GitHub PUBLIC pour le Flipper (même compilateur isolé que build_app). '
+      + 'repo : « owner/nom » ; ref : branche, tag ou commit (défaut : branche principale) ; path : dossier de l\'app '
+      + 'si application.fam n\'est pas à la racine (en cas de doute, l\'erreur liste les dossiers possibles). '
+      + 'Renvoie build_id comme build_app : ensuite install_app (Mikha valide et voit le code). Limite : 50 fichiers, 512 Ko.',
+    inputSchema: obj({
+      repo: { type: 'string', description: 'owner/nom, ex. flipperdevices/flipperzero-good-faps' },
+      ref: { type: 'string', description: 'Branche, tag ou commit (optionnel)' },
+      path: { type: 'string', description: 'Dossier de l\'app dans le dépôt (optionnel)' },
+    }, ['repo']),
+  },
+  {
     name: 'install_app',
     description: 'Installe sur le Flipper une app compilée par build_app (Mikha valide, il voit le code). '
       + 'Elle va dans /ext/apps/<category>/<appid>.fap. Ensuite start_app avec ce chemin pour la lancer, get_screen pour vérifier.',

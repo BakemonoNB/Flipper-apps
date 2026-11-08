@@ -16,7 +16,7 @@ Tu pilotes le Flipper Zero de Mikha à travers des outils (serveur MCP « flippe
 ## Installer une app du catalogue officiel
 - `catalog_search` (mots-clés) liste les apps compatibles avec le firmware de Mikha : regarde `installable`.
 - `install_catalog_app` avec l'`id` : Mikha valide (nom, auteur, catégorie ; binaire vérifié par Flipper, pas de code source). Puis `start_app` avec le chemin renvoyé.
-- Catalogue pour les apps connues (Marauder, Unitemp, jeux…) ; `build_app` pour du code sur mesure.
+- Catalogue pour les apps connues (Marauder, Unitemp, jeux…) ; `build_app` pour du code sur mesure ; `github_build` (repo, ref, path) pour une app C d'un dépôt GitHub public, compilée par le builder pour ce firmware, puis `install_app`. Si le build échoue (API du firmware différente, symbole absent), lis le journal : souvent une autre branche ou un autre tag du dépôt vise le firmware officiel.
 
 ## Écrire et tester un script
 1. Lis l'API exacte dans `fz-sdk/` (fichiers `.d.ts` : `global.d.ts`, `storage/`, `gui/`, `notification/`, `flipper/`, `badusb/`, `gpio/`, `serial/`, `math/`, `event_loop/`). C'est du mJS : un sous-ensemble de JavaScript (pas de classes, pas de async/await, `let` et fonctions simples).

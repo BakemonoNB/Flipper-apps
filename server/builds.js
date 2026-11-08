@@ -24,7 +24,8 @@ function sourcePreview(files) {
 export function createBuilds({ url, token, log, callPhone, now = () => Date.now() }) {
   const builds = new Map(); // build_id -> { appid, fap, files, preview, at }
 
-  async function build(args) {
+  // meta.source : provenance montrée à Mikha avec le code (ex. dépôt GitHub).
+  async function build(args, meta = {}) {
     if (!token) return { ok: false, error: 'compilateur non configuré (BUILD_TOKEN absent)' };
     const files = args && args.files;
     if (!files || typeof files !== 'object' || Array.isArray(files) || !Object.keys(files).length) {
@@ -49,7 +50,8 @@ export function createBuilds({ url, token, log, callPhone, now = () => Date.now(
     if (!APPID.test(body.appid || '')) return { ok: false, error: 'appid invalide (lettres, chiffres, _ ; 40 max)', log: trimLog(body.log) };
     const fap = Buffer.from(body.fap, 'base64');
     const id = 'b' + randomBytes(4).toString('hex');
-    builds.set(id, { appid: body.appid, fap, files: Object.keys(files), preview: sourcePreview(files), at: now() });
+    const preview = (meta.source ? '// Source : ' + meta.source + '\n\n' : '') + sourcePreview(files);
+    builds.set(id, { appid: body.appid, fap, files: Object.keys(files), preview, at: now() });
     while (builds.size > MAX_KEEP) builds.delete(builds.keys().next().value);
     log('INFO', 'compilation ' + id + ' : ' + body.appid + ' (' + fap.length + ' octets)');
     return { ok: true, result: { build_id: id, appid: body.appid, size: fap.length, log: trimLog(body.log) } };

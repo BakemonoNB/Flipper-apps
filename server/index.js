@@ -22,6 +22,7 @@ import { createChat } from './chat.js';
 import { createBuilds } from './builds.js';
 import { createMemory } from './memory.js';
 import { createCatalog } from './catalog.js';
+import { createGithub } from './github.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -70,6 +71,7 @@ export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks
 const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const memory = createMemory({ brainDir: BRAIN_DIR, log });
 const catalog = createCatalog({ url: CATALOG_URL, target: CATALOG_TARGET, api: FLIPPER_API, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
+const github = createGithub({ build: (a, meta) => builds.build(a, meta), log });
 const INTERNAL_TOOLS = new Set(['install_fap']);
 export async function callTool(name, args, origin) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
@@ -79,6 +81,7 @@ export async function callTool(name, args, origin) {
   if (name === 'catalog_search') return catalog.search(a);
   if (name === 'install_catalog_app') return catalog.install(a, origin);
   if (name === 'build_app') return builds.build(args);
+  if (name === 'github_build') return github.build(a);
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };
   return bridge.call(name, args, origin);
