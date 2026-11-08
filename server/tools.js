@@ -54,6 +54,21 @@ export const TOOLS = [
     inputSchema: obj({ path: path('Exemple : /ext/apps/Scripts/mon_script.js') }, ['path']),
   },
   {
+    name: 'catalog_search',
+    description: 'Cherche dans le catalogue officiel d\'applications Flipper (catalog.flipperzero.one, le même que l\'app mobile officielle). '
+      + 'Renvoie les apps compatibles avec le firmware de Mikha (id, nom, auteur, catégorie, version). Sers-toi de « installable » : false = pas de build pour cette API.',
+    inputSchema: obj({
+      query: { type: 'string', description: 'Mots-clés, ex. « unitemp », « marauder », « jeu »' },
+      category_id: { type: 'string', description: 'Facultatif : filtrer par catégorie' },
+    }),
+  },
+  {
+    name: 'install_catalog_app',
+    description: 'Installe sur le Flipper une app du catalogue officiel (id renvoyé par catalog_search). Mikha valide (il voit le nom, l\'auteur, la catégorie). '
+      + 'C\'est un binaire vérifié par Flipper, pas de code source. Ensuite start_app avec le chemin pour la lancer.',
+    inputSchema: obj({ id: { type: 'string', description: 'id de l\'app (de catalog_search)' } }, ['id']),
+  },
+  {
     name: 'build_app',
     description: 'Compile une app C pour le Flipper (firmware officiel 1.5.1, API 88.2) dans un conteneur isolé sur le VPS. '
       + 'files : {"application.fam": "...", "mon_app.c": "..."} (texte). Renvoie build_id, appid, taille et le journal '

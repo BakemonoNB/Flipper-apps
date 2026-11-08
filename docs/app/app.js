@@ -501,8 +501,16 @@ const TOOLS = {
       if (typeof a.base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(a.base64)) throw new Error('contenu de l\'app invalide');
       if (a.base64.length * 3 / 4 > MAX_FAP_BYTES) throw new Error('app trop grosse (1 Mo max)');
     },
-    describe: (a) => 'installer l\'app ' + a.path.split('/').pop() + ' (' + Math.ceil((a.base64.length * 3 / 4) / 1024) + ' Ko)',
-    preview: async (a) => (typeof a.source === 'string' ? preview(a.source, 8000) : '(code source non fourni)'),
+    describe: (a) => 'installer ' + (a.catalog ? a.catalog.name : 'l\'app ' + a.path.split('/').pop()) + ' (' + Math.ceil((a.base64.length * 3 / 4) / 1024) + ' Ko)',
+    preview: async (a) => {
+      if (a.catalog) {
+        const c = a.catalog;
+        return 'Catalogue officiel Flipper (app vérifiée, pas de code source).\n\n'
+          + c.name + '\npar ' + c.author + '\ncatégorie : ' + c.category + (c.version ? '\nversion : ' + c.version : '')
+          + (c.build_api ? '\nAPI : ' + c.build_api : '') + '\n\nInstallée dans ' + a.path;
+      }
+      return typeof a.source === 'string' ? preview(a.source, 8000) : '(code source non fourni)';
+    },
     run: async (a) => {
       const bin = atob(a.base64);
       const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
@@ -556,7 +564,9 @@ function pumpConfirm() {
       : 'Un script peut taper au clavier d\'un ordinateur branché en USB (Bad USB) ou piloter les broches GPIO. Lis le code.',
     emit: 'Émission radio, infrarouge ou NFC : vérifie que c\'est légal et voulu.',
     sensitive: 'Ce dossier peut contenir des copies de badges, de cartes ou de clés.',
-    write: c.tool === 'install_fap' ? 'Code source de l\'app ci-dessous. Installer ne la lance pas.' : 'Le fichier sera créé ou remplacé sur la carte SD.',
+    write: c.tool === 'install_fap'
+      ? (c.args.catalog ? 'App du catalogue officiel Flipper (binaire vérifié). Installer ne la lance pas.' : 'Code source de l\'app ci-dessous. Installer ne la lance pas.')
+      : 'Le fichier sera créé ou remplacé sur la carte SD.',
   }[c.level] || 'Regarde l\'écran du Flipper si besoin.';
   const args = { ...c.args };
   if (typeof args.content === 'string') args.content = '(' + args.content.length + ' caractères, voir ci-dessous)';

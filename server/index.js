@@ -3,6 +3,7 @@
 //   PHONE_TOKEN : jeton de l'app téléphone (WebSocket /ws),
 //   API_TOKEN   : jeton des appelants de l'API (/api/*, et /logs),
 //   LOGS_TOKEN  : jeton de lecture du journal (/logs).
+// Catalogue : CATALOG_URL, FLIPPER_API (88.2 = firmware 1.5.1), CATALOG_TARGET (f7).
 // Mémoire : BRAIN_DIR (/srv/brain/_Claude) : lecture des notes flipper, écriture dans _drafts/inbox/.
 // Compilation : BUILD_URL (http://127.0.0.1:3050), BUILD_TOKEN (service builder/).
 // Chat : STATE_DIR (~/.flipper-bridge), CLAUDE_BIN (claude), CLAUDE_MODEL (vide = modèle par défaut),
@@ -20,6 +21,7 @@ import { requestAuthorized } from './auth.js';
 import { createChat } from './chat.js';
 import { createBuilds } from './builds.js';
 import { createMemory } from './memory.js';
+import { createCatalog } from './catalog.js';
 
 const PORT = Number(process.env.PORT || 3040);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -35,6 +37,9 @@ const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 8192);
 const BUILD_URL = process.env.BUILD_URL || 'http://127.0.0.1:3050';
 const BUILD_TOKEN = process.env.BUILD_TOKEN || '';
 const BRAIN_DIR = process.env.BRAIN_DIR || '/srv/brain/_Claude';
+const CATALOG_URL = process.env.CATALOG_URL || 'https://catalog.flipperzero.one/api/v0';
+const FLIPPER_API = process.env.FLIPPER_API || '88.2';
+const CATALOG_TARGET = process.env.CATALOG_TARGET || 'f7';
 const RING_SIZE = 1000;
 const MAX_BODY = 64 * 1024;
 
@@ -64,12 +69,15 @@ export const bridge = createBridge({ phoneToken: PHONE_TOKEN, commit, log, hooks
 // install_fap est interne : seul install_app (donc un .fap sorti du builder) peut l'appeler.
 const builds = createBuilds({ url: BUILD_URL, token: BUILD_TOKEN, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const memory = createMemory({ brainDir: BRAIN_DIR, log });
+const catalog = createCatalog({ url: CATALOG_URL, target: CATALOG_TARGET, api: FLIPPER_API, log, callPhone: (t, a, o, opts) => bridge.call(t, a, o, opts) });
 const INTERNAL_TOOLS = new Set(['install_fap']);
 export async function callTool(name, args, origin) {
   const a = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
   if (name === 'memory_search') return memory.search(a);
   if (name === 'memory_read') return memory.read(a);
   if (name === 'memory_note') return memory.note(a, origin);
+  if (name === 'catalog_search') return catalog.search(a);
+  if (name === 'install_catalog_app') return catalog.install(a, origin);
   if (name === 'build_app') return builds.build(args);
   if (name === 'install_app') return builds.install(args, origin);
   if (INTERNAL_TOOLS.has(name)) return { ok: false, error: 'outil interne : passe par build_app puis install_app' };

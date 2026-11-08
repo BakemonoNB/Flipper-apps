@@ -49,7 +49,7 @@ export const parentOf = (p) => p.slice(0, p.lastIndexOf('/'));
 export const MAX_FAP_BYTES = 1024 * 1024;
 export function checkFapPath(p) {
   const q = normPath(p);
-  const m = /^\/ext\/apps\/([A-Za-z0-9_]{1,20})\/([A-Za-z0-9_]{1,40})\.fap$/.exec(q);
+  const m = /^\/ext\/apps\/([A-Za-z0-9_-]{1,24})\/([A-Za-z0-9_-]{1,48})\.fap$/.exec(q);
   if (!m || m[1].toLowerCase() === 'system') throw new Error('une app s\'installe dans /ext/apps/<Catégorie>/<appid>.fap (pas System)');
   return q;
 }
