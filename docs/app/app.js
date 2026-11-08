@@ -53,6 +53,7 @@ function selectTab(name, { focus = false } = {}) {
   if (!TABS.includes(name)) name = 'pad';
   currentTab = name;
   document.body.dataset.tab = name;
+  if (window.__fitBars) requestAnimationFrame(window.__fitBars);
   for (const t of TABS) {
     const tab = $('tab-' + t);
     const on = t === name;
@@ -704,11 +705,16 @@ function chatControls() {
 }
 
 // ---------- Défilement ----------
-// La coque est fixe : seul #scroller défile. On ne ramène en bas que si on y était déjà.
-const scroller = $('scroller');
-const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 90;
+// C'est la PAGE qui défile (plein écran Bluefy et « tirer pour actualiser » marchent).
+// En chat, on ne ramène en bas que si on y était déjà.
+const page = () => document.scrollingElement || document.documentElement;
+const scroller = { set scrollTop(v) { window.scrollTo(0, v); } };
+const nearBottom = () => {
+  const el = page();
+  return el.scrollHeight - (window.scrollY + window.innerHeight) < 90;
+};
 function scrollChat() {
-  scroller.scrollTop = scroller.scrollHeight;
+  window.scrollTo(0, page().scrollHeight);
   $('toBottom').hidden = true;
 }
 function followChat(wasNear) {
@@ -716,19 +722,25 @@ function followChat(wasNear) {
   if (wasNear) scrollChat();
   else $('toBottom').hidden = false;
 }
-scroller.addEventListener('scroll', () => { if (nearBottom()) $('toBottom').hidden = true; }, { passive: true });
+window.addEventListener('scroll', () => { if (nearBottom()) $('toBottom').hidden = true; }, { passive: true });
 $('toBottom').addEventListener('click', scrollChat);
 
-// Hauteur de la coque = partie réellement visible (le clavier iOS ne recouvre plus la saisie).
+// Zone de saisie : sa hauteur réserve la place en bas de page, et elle remonte au-dessus du clavier iOS.
 {
   const vv = window.visualViewport;
+  const root = document.documentElement.style;
   const fit = () => {
-    document.documentElement.style.setProperty('--app-h', Math.round(vv ? vv.height : innerHeight) + 'px');
-    if (window.scrollY) window.scrollTo(0, 0);
+    const bar = document.querySelector('.composer-bar');
+    root.setProperty('--composer-h', (currentTab === 'chat' && bar ? bar.offsetHeight : 0) + 'px');
+    const kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+    root.setProperty('--kb', kb + 'px');
+    document.body.classList.toggle('kb-open', kb > 80);
   };
   fit();
   if (vv) { vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); }
   addEventListener('resize', fit);
+  new ResizeObserver(fit).observe(document.querySelector('.composer-bar'));
+  window.__fitBars = fit;
 }
 
 // Markdown minimal et sûr (aucun HTML du modèle n'est interprété) : gras, `code`, blocs de code, listes, titres.

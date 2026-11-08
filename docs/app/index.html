@@ -26,18 +26,21 @@
   html { font: -apple-system-body; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* iOS zoome sur tout champ en dessous de 16 px : on ne descend jamais sous 16 px (sans bloquer le zoom à deux doigts). */
   input, textarea, select { font-size: max(16px, 1em) !important; }
-  /* Coque fixe : haut (barre + écran) et bas (saisie + onglets) ne bougent jamais, seul le milieu défile. */
-  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  /* La PAGE défile (Bluefy peut masquer sa barre = plein écran, et « tirer pour actualiser » marche).
+     Le haut (barre + écran du Flipper) reste collé avec sticky ; saisie et onglets sont fixés en bas. */
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; line-height: 1.4;
-    display: flex; flex-direction: column; height: var(--app-h, 100dvh);
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--composer-h, 0px) + 12px);
   }
-  .app { flex: 1; min-height: 0; width: 100%; max-width: 560px; margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) 16px 0;
-    display: flex; flex-direction: column; }
-  #scroller { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
-    margin: 0 -16px; padding: 0 16px 12px; position: relative; }
-  .composer-bar { display: none; padding: 6px 0 8px; position: relative; }
+  /* Toujours un peu plus haut que l'écran : on peut toujours glisser pour passer en plein écran. */
+  .app { width: 100%; max-width: 560px; margin: 0 auto; padding: 0 16px; min-height: calc(100lvh + 2px); }
+  .head { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 0 -16px; padding: max(10px, env(safe-area-inset-top)) 16px 10px; }
+  #scroller { position: relative; }
+  .composer-bar { display: none; position: fixed; z-index: 9; left: 0; right: 0; margin: 0 auto; max-width: 560px;
+    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); padding: 6px 16px 8px;
+    background: linear-gradient(to bottom, transparent, var(--bg) 18%); }
+  body.kb-open .composer-bar { bottom: var(--kb, 0px); }
   .composer-bar .chat-head { margin-bottom: 8px; }
   .composer-bar .segmented span { min-height: 34px; font-size: .84em; }
   .composer-bar .chat-head .btn.small { min-height: 40px; min-width: 44px; }
@@ -214,7 +217,7 @@
   dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-all; }
 
   /* Barre d'onglets */
-  .tabbar { flex: none; z-index: 10; display: flex; justify-content: center;
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; justify-content: center;
     background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
     border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }
   .tabbar .inner { display: flex; width: 100%; max-width: 560px; }
@@ -246,6 +249,7 @@
 </head>
 <body>
 <div class="app">
+  <div class="head">
   <header class="topbar">
     <div class="grow">
       <h1><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="#1a0e00" d="M4 7a3 3 0 013-3h10a3 3 0 013 3v10a3 3 0 01-3 3H7a3 3 0 01-3-3zm4 2v6h8V9z"/></svg></span>Flipper</h1>
@@ -270,7 +274,7 @@
       </span>
     </div>
   </section>
-  <div style="height:12px;flex:none"></div>
+  </div>
 
   <main id="scroller">
     <section id="panel-pad" class="panel" role="tabpanel" aria-labelledby="tab-pad" tabindex="-1">
