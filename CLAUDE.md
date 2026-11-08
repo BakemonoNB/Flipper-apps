@@ -1,6 +1,6 @@
 # flipper-apps
 
-- Cible : firmware officiel 1.5.1 (API 88.2) ; passage à Unleashed (API 88.x, compatible catalogue et SDK officiels) choisi le 2026-11-08 plutôt que Momentum (API 87.1), outil `update_firmware` ; animations sauvegardées avant (`backup`). Le firmware réel est lu par l'app à chaque connexion (`system_device_info`) et envoyé au serveur : SDK du builder, API du catalogue et prompts en dépendent. Ne pas utiliser de symbole hors de l'API publique du firmware visé.
+- Firmware du Flipper : Unleashed unlshd-094 (API 88.19) depuis le 2026-11-08 (avant : officiel 1.5.1, API 88.2). Compatible avec le catalogue et le SDK officiels (API 88.x) ; Momentum écarté (API 87.1). Le firmware réel est lu par l'app à chaque connexion (`system_device_info`) et envoyé au serveur : SDK du builder, API du catalogue et prompts en dépendent. Ne pas utiliser de symbole hors de l'API publique du firmware visé.
 - Apps C dans `apps/<nom>/` (un `application.fam` par app), build avec `ufbt` depuis le dossier de l'app.
 - Scripts JS (mJS) dans `scripts/`.
 - L'utilisateur travaille souvent depuis son téléphone : le déploiement passe par l'app mobile Flipper (Bluetooth), sans CLI ni USB. Tout ce qui dépend de l'USB (Bad USB, HID USB) se teste sur le PC Windows.
